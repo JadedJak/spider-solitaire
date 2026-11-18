@@ -1,0 +1,3370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>Spider Solitaire</title>
+<style>
+  :root{
+    --cw: 128px;
+    --ch: 179px;
+    --felt-1: #0b3d2e;
+    --felt-2: #0e5c40;
+    /* Dialog/settings-panel tint -- follows the chosen table background (see TABLE_THEMES). */
+    --dlg-1: #163d2c;
+    --dlg-2: #0c2a1e;
+    --panel-solid: rgba(18,30,25,0.92);
+    --panel-bg: rgba(15, 26, 22, 0.55);
+    --panel-border: rgba(255,255,255,0.12);
+    --accent: #ffcf5c;
+    --accent-2: #6fd6a0;
+    --text: #eef6f0;
+    --text-dim: #b8c9c0;
+    --danger: #ff6b6b;
+    --radius: 14px;
+    --card-radius: 9px;
+    /* Card-back colors (the facedown card fan and the stock pile) — overridden from JS when
+       the player picks a different swatch in Settings; this pair is just the default. */
+    --back-1: #241a4a;
+    --back-2: #2f2260;
+  }
+  *{ box-sizing: border-box; }
+  html{ font-size: 16px; }
+  /* Bigger base UI scale once there's room for it — tuned so a 1920x1080 desktop viewport
+     gets noticeably larger text/buttons instead of the same size stretched over more space. */
+  @media (min-width: 1200px){
+    html{ font-size: 18px; }
+  }
+  html,body{
+    height:100%; margin:0;
+    font-family: 'Segoe UI', system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif;
+    color: var(--text);
+    overflow: hidden;
+    -webkit-user-select:none; user-select:none;
+  }
+  body{
+    background:
+      radial-gradient(1200px 800px at 50% -10%, rgba(255,255,255,0.06), transparent 60%),
+      repeating-linear-gradient(45deg, rgba(255,255,255,0.015) 0 2px, transparent 2px 4px),
+      radial-gradient(1400px 900px at 50% 110%, var(--felt-2), var(--felt-1) 70%);
+    display:flex;
+    flex-direction:column;
+    height:100vh;
+  }
+
+  /* ---------- Top bar ---------- */
+  /* Always exactly one row — never wraps. On a screen too narrow to fit everything even after
+     the mobile compaction below, it scrolls horizontally instead of breaking into extra rows
+     (an occasional real edge case on the very narrowest phones; the common case is compact
+     enough to need neither). */
+  #topbar{
+    display:flex; align-items:center; gap:14px;
+    padding:10px 16px;
+    background: var(--panel-bg);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--panel-border);
+    box-shadow: 0 4px 18px rgba(0,0,0,0.25);
+    z-index:50;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  #topbar::-webkit-scrollbar{ display:none; }
+  #title{
+    font-weight:700; font-size:1.5rem; letter-spacing:0.5px;
+    display:flex; align-items:center; gap:8px;
+    margin-right:6px;
+    color: var(--accent);
+    text-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    flex-shrink:0;
+  }
+  #title .web{ font-size:1.6rem; filter: drop-shadow(0 0 4px rgba(255,207,92,0.5)); }
+
+  .stat{
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 8px 16px;
+    font-size:0.9rem;
+    color: var(--text-dim);
+    display:flex; flex-direction:column; align-items:center; min-width:64px;
+  }
+  .stat b{ color:var(--text); font-size:1.15rem; font-weight:600; }
+
+  /* Stats live down here (like solitaired.com's bottom status bar) rather than in the topbar —
+     a plain flex sibling of #topbar/#boardOuter in body's column, not position:fixed, so
+     #boardOuter's flex:1 naturally shrinks to leave it room instead of anything overlapping. */
+  #footerBar{
+    display:flex; align-items:center; justify-content:center; gap:12px; flex-wrap:nowrap;
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+    background: var(--panel-bg);
+    backdrop-filter: blur(10px);
+    border-top: 1px solid var(--panel-border);
+    overflow-x: auto;
+    scrollbar-width: none;
+    z-index:50;
+  }
+  #footerBar::-webkit-scrollbar{ display:none; }
+
+  #controls{ display:flex; gap:10px; margin-left:auto; flex-wrap:nowrap; flex-shrink:0; }
+  button.btn{
+    background: linear-gradient(180deg, rgba(255,255,255,0.14), rgba(255,255,255,0.05));
+    border: 1px solid var(--panel-border);
+    color: var(--text);
+    padding: 10px 16px;
+    border-radius: 10px;
+    font-size: 0.95rem;
+    font-weight:600;
+    cursor:pointer;
+    display:flex; align-items:center; gap:6px;
+    transition: transform .12s ease, box-shadow .12s ease, background .12s ease, opacity .12s ease;
+  }
+  button.btn:hover{ transform: translateY(-2px); box-shadow: 0 6px 14px rgba(0,0,0,0.3); background: linear-gradient(180deg, rgba(255,255,255,0.22), rgba(255,255,255,0.08)); }
+  button.btn:active{ transform: translateY(0); }
+  button.btn:disabled{ opacity:0.35; cursor:default; transform:none; box-shadow:none; }
+  button.btn.primary{ background: linear-gradient(180deg, #ffd873, #e8a93a); color:#2b1c00; border-color: rgba(0,0,0,0.15); }
+  button.btn.primary:hover{ background: linear-gradient(180deg, #ffe08a, #f0b545); }
+
+  /* ---------- Settings panel ---------- */
+  #settingsWrap{ position:relative; }
+  /* position:fixed, not absolute — #topbar has overflow-x:auto (added so it scrolls sideways
+     instead of wrapping to extra rows on narrow screens), and per the CSS overflow spec,
+     setting only overflow-x forces overflow-y to compute to 'auto' too, which was silently
+     clipping this panel: it's positioned below the button and technically outside the bar's
+     own box, so it never became visible even though the 'open' class was toggling correctly.
+     Fixed positioning escapes ancestor overflow entirely; JS sets its on-screen top/right to
+     track the button each time it opens. */
+  #settingsPanel{
+    position:fixed;
+    width:260px;
+    background: var(--panel-solid);
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius);
+    padding: 16px;
+    box-shadow: 0 12px 30px rgba(0,0,0,0.45);
+    display:none;
+    flex-direction:column; gap:14px;
+    z-index:100;
+    backdrop-filter: blur(8px);
+  }
+  #settingsPanel.open{ display:flex; }
+
+  /* Difficulty tabs, now living directly in #topbar (like solitaired.com's Four/Two/One Suit
+     tabs) rather than in a 260px-wide settings panel — sized to their own content instead of
+     splitting a fixed width three ways. */
+  .pill-group{ display:flex; gap:6px; flex-shrink:0; }
+  .pill{
+    text-align:center; padding:9px 14px; border-radius:9px; white-space:nowrap;
+    background: rgba(255,255,255,0.06); border:1px solid var(--panel-border);
+    cursor:pointer; font-size:0.85rem; font-weight:600; color: var(--text-dim);
+    transition: all .12s ease;
+  }
+  .pill:hover{ background: rgba(255,255,255,0.12); }
+  .pill.active{ background: linear-gradient(180deg, var(--accent-2), #3fa876); color:#06301c; border-color: transparent; }
+  .row{ display:flex; align-items:center; justify-content:space-between; }
+  .switch{ position:relative; width:42px; height:24px; }
+  .switch input{ opacity:0; width:0; height:0; }
+  .slider{ position:absolute; inset:0; background: rgba(255,255,255,0.15); border-radius: 24px; cursor:pointer; transition:.2s; }
+  .slider:before{ content:""; position:absolute; height:18px; width:18px; left:3px; top:3px; background:white; border-radius:50%; transition:.2s; }
+  .switch input:checked + .slider{ background: var(--accent-2); }
+  .switch input:checked + .slider:before{ transform: translateX(18px); }
+
+  /* Card-back color picker: each swatch is a small circle previewing that theme's own two
+     colors (set inline as --sw1/--sw2 per swatch, read by the swatch's own background), so
+     adding a new theme in JS is enough -- no separate CSS rule needed per color. */
+  .swatch-row{ display:flex; flex-direction:column; gap:8px; align-items:flex-start; }
+  .swatch-group{ display:flex; gap:8px; flex-wrap:wrap; }
+  .swatch{
+    width:26px; height:26px; border-radius:50%; flex-shrink:0;
+    background: linear-gradient(135deg, var(--sw1), var(--sw2));
+    border: 2px solid rgba(255,255,255,0.2);
+    cursor:pointer; transition: transform .12s ease, border-color .12s ease;
+  }
+  .swatch:hover{ transform: scale(1.12); }
+  .swatch.active{ border-color: var(--accent); box-shadow: 0 0 0 2px rgba(255,207,92,0.35); }
+
+  /* Suit picker: four glyph buttons, white like a card face so red/black read correctly. */
+  .suitChoice{
+    width:34px; height:34px; border-radius:8px; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center;
+    font-size:1.35rem; line-height:1; background:#fbfbf8; color:#111;
+    border:2px solid rgba(255,255,255,0.2); cursor:pointer;
+    transition: transform .12s ease, border-color .12s ease, opacity .12s ease;
+  }
+  .suitChoice.red{ color:#c62828; }
+  .suitChoice:hover{ transform: scale(1.08); }
+  .suitChoice.active{ border-color: var(--accent); box-shadow: 0 0 0 2px rgba(255,207,92,0.55); }
+  .swatch-group.disabled .suitChoice{ opacity:0.4; }
+  .settingsNote{ font-size:0.75rem; color: var(--text-dim); }
+
+  /* ---------- Board ---------- */
+  #boardOuter{
+    flex:1; overflow: auto; padding: 22px 30px 36px;
+  }
+  /* Also triggers on a short viewport regardless of width -- a wide phone in landscape (e.g.
+     ~900px wide but only ~400px tall) needs this same compact chrome just as much as a narrow
+     portrait phone does; a width-only breakpoint was styling it as "desktop" and leaving far
+     less of that short height for the actual board than it should have. */
+  @media (max-width: 900px), (max-height: 500px){
+    #boardOuter{ padding: 12px 8px 20px; }
+  }
+  #board{ max-width:1880px; margin:0 auto; } /* fills a 1920px-wide viewport's usable width */
+
+  /* Row 1 of the two-row board, built to line up exactly with row 2's tableau grid below it:
+     one card-width slot for the stock, then 8 more for the completed-suit foundations — 9 of
+     the 10 column positions, each the same width as a tableau column and separated by the
+     same gap (both set from JS in computeCardSize, the same place #columns' own gap comes
+     from, so all three rows share one source of truth and can't drift out of alignment). */
+  #topRow{ display:flex; align-items:flex-start; margin-bottom:24px; }
+  #stockArea{ width: var(--cw); flex-shrink:0; position:relative; }
+  /* Column position 2 (right after the stock) stays empty — the 8 foundation slots start at
+     position 3. Same width as every other slot in this row so it still counts as one column
+     for alignment purposes, it just renders nothing. */
+  #topRowSpacer{ width: var(--cw); flex-shrink:0; }
+  .stockPile{
+    width: var(--cw); height: var(--ch);
+    border-radius: var(--card-radius);
+    /* Same two card-back variables as .card.facedown, so the stock pile always matches
+       whichever swatch is picked instead of staying a fixed purple regardless of theme. */
+    background: linear-gradient(135deg, var(--back-2), var(--back-1));
+    border: 1px solid rgba(255,255,255,0.15);
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer; position:relative;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.4), 0 0 0 4px rgba(0,0,0,0.15) inset;
+    transition: transform .12s ease;
+    touch-action: none;
+  }
+  .stockPile:hover{ transform: translateY(-3px); }
+  .stockPile.empty{ background: rgba(255,255,255,0.03); border-style:dashed; box-shadow:none; cursor:default; }
+  .stockPile .stackShadow{ position:absolute; inset:0; border-radius:var(--card-radius); background: inherit; box-shadow: -4px -4px 0 -2px rgba(255,255,255,0.05); }
+  .stockCount{ position:absolute; bottom:-10px; right:-8px; background: var(--accent); color:#2b1c00; font-size:0.72rem; font-weight:700; border-radius:20px; padding:2px 7px; box-shadow:0 2px 6px rgba(0,0,0,0.4); }
+  /* Sits below the stock pile rather than beside it — beside it would eat into the card-width
+     slot the stock needs to stay aligned with tableau column 0. */
+  .dealsLeft{
+    position:absolute; top:calc(var(--ch) + 8px); left:0; width:var(--cw);
+    text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    font-size:0.75rem; color:var(--text-dim);
+  }
+
+  /* Never wraps — the board is exactly two rows: stock + the 8 completed-suit slots on this
+     one line, then the tableau columns below. flex-shrink:0 on each slot keeps them all full
+     card size instead of getting squeezed to fit if the row runs short on width. */
+  #foundations{ display:flex; flex-wrap:nowrap; }
+  .foundSlot{
+    width: var(--cw); height: var(--ch); flex-shrink:0;
+    border-radius: var(--card-radius);
+    border: 1px solid rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.04);
+    display:flex; align-items:center; justify-content:center;
+    font-size: calc(var(--cw) * 0.32); font-weight:700;
+  }
+  .foundSlot.filled{ background: white; color:#111; box-shadow: 0 3px 8px rgba(0,0,0,0.4); }
+  .foundSlot.filled.red{ color:#c8102e; }
+
+  #columns{ display:flex; gap: 14px; }
+  .column{
+    flex: 1 1 0; min-width:0;
+    position: relative;
+    min-height: 260px;
+    border-radius: 10px;
+    transition: box-shadow .15s ease;
+    touch-action: none;
+  }
+  .column.empty-slot{
+    border: 2px dashed rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.02);
+  }
+  .column.drop-hover{ box-shadow: 0 0 0 3px var(--accent-2) inset, 0 0 20px rgba(111,214,160,0.35); border-radius:10px; }
+
+  .card{
+    position:absolute; left:0; top:0;
+    width: var(--cw); height: var(--ch);
+    border-radius: var(--card-radius);
+    background: #fbfbf8;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.35);
+    border: 1px solid rgba(0,0,0,0.15);
+    transition: box-shadow .15s ease, transform .12s ease, top .16s ease, left .16s ease;
+    cursor: pointer;
+    touch-action: none;
+  }
+  /* Guarded to real mouse users only -- on a touchscreen there's no actual hover, but mobile
+     WebKit/Blink apply :hover anyway on tap (a well-known touch quirk), so EVERY tap on a faceup
+     card, covered or not, was popping it to z-index:500 !important and lifting it -3px. That's
+     what was actually causing "I should never see the part of the card that's covered" -- a
+     confirmed screen recording showed a covered card's full watermark exposed on touch, which
+     traces directly to this rule, completely independent of the .selected/.lift logic (already
+     correct) or the hit-testing/label fixes (also already correct) -- this ran on pure CSS
+     hover, before any of that JS ever got a say. (hover: hover) is true only when the input
+     device can genuinely hover without activating anything (a mouse); it's false for touch.
+     :last-child restricts it further, to a genuine mouse: without it, a real mouse hovering the
+     visible sliver of a COVERED card (one with something stacked after it) still popped that
+     whole card's full body to the front via z-index:500 -- the exact same "expose what's
+     covered" bug, just via real hover instead of phantom touch-hover. #columns appends cards in
+     ascending idx order, so :last-child is always that column's actual bottom/uncovered card,
+     the same rule the .selected/.lift logic already applies. */
+  @media (hover: hover) and (pointer: fine){
+    .column .card.faceup:last-child:hover{ box-shadow: 0 6px 14px rgba(0,0,0,0.45); transform: translateY(-3px); z-index: 500 !important; }
+  }
+  /* .selected marks every card from the touched one down to the bottom of the column with the
+     glow ring, but that's ALL it does on its own — no movement. Moving a card whose selection
+     is what's covering it (there are cards stacked after/below it) reads as wrong no matter how
+     it's animated, so the lift only ever applies via the separate .lift class below, which JS
+     adds only when the touched card is the bottom/uncovered one — nothing is ever raised while
+     something else is stacked on top of it. */
+  .card.selected{ box-shadow: 0 0 0 3px var(--accent), 0 8px 18px rgba(0,0,0,0.5); }
+  .card.selected.lift{ transform: translateY(-6px); }
+  /* Must also beat .card.faceup:hover, which is more specific than a bare .card.dragging.
+     No !important on z-index here — each dragged card gets its own inline z-index (set in
+     JS, ordered so the "back"/earlier card in the grabbed run never covers the ones after
+     it) and an !important rule would silently win over that per-card value, forcing every
+     card in the dragged group to the same layer and leaving their paint order to an
+     unreliable DOM-order tie-break. */
+  .card.dragging, .card.dragging:hover{ transition: none; box-shadow: 0 14px 30px rgba(0,0,0,0.55); transform: scale(1.03) rotate(-1deg); z-index: 9000; }
+  .card.hint-glow{ animation: glow 0.9s ease-in-out infinite alternate; }
+  @keyframes glow{ from{ box-shadow: 0 0 6px 2px rgba(255,207,92,0.5);} to{ box-shadow: 0 0 18px 6px rgba(255,207,92,0.95);} }
+  /* Flip flourish when a card turns face up (revealed under a moved run, or via undo) — this
+     is a new element (facedown/faceup are built as different DOM structures), so it can't
+     morph its own content; it just spins itself into view like it's mid-turn instead of
+     popping straight in. */
+  .card.flip-reveal{ animation: flipReveal 0.38s ease; backface-visibility: hidden; }
+  @keyframes flipReveal{ from{ transform: rotateY(-100deg); } to{ transform: rotateY(0deg); } }
+  .shake{ animation: shake .35s ease; }
+  @keyframes shake{ 0%,100%{transform:translateX(0);} 25%{transform:translateX(-6px);} 75%{transform:translateX(6px);} }
+
+  /* Just one corner label (top-left: rank, then suit) — a second, upside-down copy at the
+     bottom-right is the norm on real playing cards (so it's legible from either end of a hand
+     of cards held in front of you), but that's not how this board is used, and solitaired.com's
+     cards don't carry it either: one label plus the big suit icon below is all that's needed. */
+  /* Just the rank now -- no separate small suit icon up here alongside it. The big centered
+     watermark below already carries the suit clearly, so pairing it with a second, smaller suit
+     icon in the corner was redundant clutter; the corner's job is now purely "which rank is
+     this". Single line, so it stays well within the compact sliver each covered card gets in
+     the fan (the touch-target/label-height fix from earlier is unaffected -- this is shorter
+     than before, not taller). */
+  .card .corner{
+    position:absolute; top:4px; left:6px; font-size: calc(var(--cw) * 0.28);
+    font-weight:800; line-height:1;
+  }
+  /* Bold, large, and mostly opaque (was a faint 13%-opacity background texture) — this is the
+     card's main, primary suit indicator now that the corner only carries the rank, sized much
+     closer to solitaired.com's own big central icon rather than a modest accent. */
+  .card .watermark{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    font-size: calc(var(--cw) * 0.85); opacity:0.9;
+  }
+  .card.red{ color:#c8102e; }
+  .card.black{ color:#161616; }
+
+  /* Colors come from CSS custom properties (set from JS via the card-back swatches in
+     Settings) rather than hardcoded values, so switching the theme is just a variable update,
+     not a re-render. The border was the real reason the stacked-facedown-card count was hard
+     to read, independent of which color was picked: rgba(0,0,0,0.35) is a DARK border on a
+     DARK fill, so the ~8px sliver of each card underneath barely showed up at all -- a light,
+     translucent border reads clearly against every one of the color options below (and against
+     the dark green felt), which is what actually fixes the "can't see how many are stacked"
+     complaint; the color picker on top of that is for personal preference, not contrast. */
+  .card.facedown{
+    background:
+      radial-gradient(circle at 50% 40%, rgba(255,255,255,0.08), transparent 60%),
+      repeating-linear-gradient(45deg, var(--back-1), var(--back-1) 6px, var(--back-2) 6px, var(--back-2) 12px);
+    border: 1px solid rgba(255,255,255,0.3);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .card.facedown .spidericon{ font-size: calc(var(--cw)*0.38); opacity:0.55; filter: drop-shadow(0 0 3px rgba(0,0,0,0.6)); }
+
+  .placeholder-hint{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color: rgba(255,255,255,0.2); font-size:1.6rem; pointer-events:none;
+  }
+
+  /* ---------- Toast ---------- */
+  #toast{
+    /* Clears #footerBar (a real element taking up space at the bottom now, not just floating
+       game content) plus its own safe-area padding, instead of sitting on top of/behind it. */
+    position:fixed; bottom: calc(76px + env(safe-area-inset-bottom, 0px)); left:50%; transform: translateX(-50%) translateY(20px);
+    background: rgba(20,20,20,0.92); color:white; padding:10px 20px; border-radius:30px;
+    font-size:0.88rem; box-shadow:0 8px 22px rgba(0,0,0,0.5); opacity:0; transition: all .25s ease;
+    pointer-events:none; z-index:1000; max-width:80vw; text-align:center;
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+  #toast.show{ opacity:1; transform: translateX(-50%) translateY(0); }
+
+  /* ---------- Win overlay ---------- */
+  #winOverlay{
+    position:fixed; inset:0; background: rgba(4,10,7,0.82); backdrop-filter: blur(6px);
+    display:none; align-items:center; justify-content:center; z-index:2000;
+  }
+  #winOverlay.show{ display:flex; }
+  #winCard{
+    background: linear-gradient(160deg, var(--dlg-1), var(--dlg-2));
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 20px; padding: 34px 44px; text-align:center;
+    box-shadow: 0 30px 70px rgba(0,0,0,0.6);
+    max-width: 90vw;
+  }
+  #winCard h2{ margin:0 0 8px; font-size:1.8rem; color:var(--accent); }
+  #winCard p{ color:var(--text-dim); margin: 4px 0 18px; }
+  /* Sits between the stat boxes and the Play Again button — either a "new record" badge (or
+     two, if both time and moves were beaten) or, when this win didn't beat anything, a quiet
+     reminder of what the actual best is so the number just shown has something to compare to. */
+  .winBest{ margin: -8px 0 16px; min-height:22px; }
+  .win-badge{
+    display:inline-block; background: linear-gradient(180deg, var(--accent), #e8a93a);
+    color:#2b1c00; font-weight:700; font-size:0.82rem; padding:5px 12px; border-radius:20px;
+    margin: 2px 4px;
+  }
+  .win-best-summary{ color:var(--text-dim); font-size:0.85rem; }
+
+  /* ---------- Stats overlay (best time/moves per difficulty, from localStorage) ---------- */
+  #statsOverlay{
+    position:fixed; inset:0; background: rgba(4,10,7,0.82); backdrop-filter: blur(6px);
+    display:none; align-items:center; justify-content:center; z-index:2100;
+  }
+  #statsOverlay.show{ display:flex; }
+  #statsCard{
+    background: linear-gradient(160deg, var(--dlg-1), var(--dlg-2));
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 20px; padding: 28px 32px; text-align:center;
+    box-shadow: 0 30px 70px rgba(0,0,0,0.6);
+    max-width: 92vw;
+  }
+  #statsCard h2{ margin:0 0 16px; font-size:1.3rem; color:var(--accent); }
+  /* Header + one row per difficulty, sharing the same 4-column grid so values line up under
+     their own label regardless of how wide "1 Suit" vs "4 Suits" happens to render. */
+  .statsTable{ display:flex; flex-direction:column; gap:6px; margin-bottom:22px; min-width:300px; }
+  .statsHeader, .statsRow{
+    display:grid; grid-template-columns: 1.1fr 1fr 1fr 1fr; gap:8px; align-items:center;
+  }
+  .statsHeader{ color:var(--text-dim); font-size:0.72rem; text-transform:uppercase; letter-spacing:0.4px; padding:0 10px; }
+  .statsRow{ background: rgba(255,255,255,0.05); border-radius:8px; padding:9px 10px; }
+  .statsDiff{ text-align:left; font-weight:600; }
+  .statsVal{ font-weight:600; color:var(--accent-2); }
+  .statsVal.empty{ color: var(--text-dim); font-weight:400; }
+
+  /* ---------- Confirm overlay (in-page, not window.confirm — that dialog is blocked/no-op
+     inside many embedded webviews and sandboxed iframes, including where this can run) ---- */
+  #confirmOverlay{
+    position:fixed; inset:0; background: rgba(4,10,7,0.82); backdrop-filter: blur(6px);
+    display:none; align-items:center; justify-content:center; z-index:2100;
+  }
+  #confirmOverlay.show{ display:flex; }
+  #confirmCard{
+    background: linear-gradient(160deg, var(--dlg-1), var(--dlg-2));
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 20px; padding: 30px 38px; text-align:center;
+    box-shadow: 0 30px 70px rgba(0,0,0,0.6);
+    max-width: 90vw;
+  }
+  #confirmCard h2{ margin:0 0 8px; font-size:1.3rem; color:var(--accent); }
+  #confirmCard p{ color:var(--text-dim); margin: 4px 0 18px; }
+  #confirmBtns{ display:flex; gap:10px; justify-content:center; }
+  .winStats{ display:flex; gap:16px; justify-content:center; margin-bottom:20px; }
+
+  /* Win animations draw on a canvas INSIDE #winOverlay, layered between the blurred backdrop
+     and #winCard -- so trails (fireworks, the card cascade) never paint over the win dialog. */
+  .winCanvas{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; transition: opacity .8s ease; }
+  #winCard{ position:relative; z-index:1; }
+
+  @media (max-width: 720px){
+    button.btn span.label{ display:none; }
+    button.btn{ padding:8px 10px; }
+    #controls{ gap:6px; }
+  }
+  /* Below this, keeping full-size stat boxes and the title text is what forced the topbar
+     into 2+ rows (or off-screen scrolling) on an ordinary portrait phone — compact hard
+     enough that the whole bar fits in one row without needing landscape. Also triggers on a
+     short viewport regardless of width (see #boardOuter's own copy of this same condition
+     above) -- a wide-but-short phone landscape needs the same compact topbar/footer, not the
+     full-size "desktop" chrome a width-only breakpoint would give it. */
+  @media (max-width: 900px), (max-height: 500px){
+    #topbar{ padding:6px 8px; gap:6px; }
+    #title{ font-size:1rem; gap:3px; margin-right:0; }
+    #title .web{ font-size:1.1rem; }
+    #title .titleText{ display:none; }
+    .pill-group{ gap:3px; }
+    .pill{ padding:6px 8px; font-size:0.68rem; }
+    button.btn{ padding:6px 7px; gap:0; }
+    #controls{ gap:3px; }
+    #footerBar{ gap:3px; padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px)); }
+    .stat{ min-width:34px; padding:3px 4px; font-size:0.5rem; border-radius:6px; }
+    .stat b{ font-size:0.72rem; }
+  }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div id="title"><span class="web">🕷️</span> <span class="titleText">Spider Solitaire</span></div>
+  <!-- Difficulty is a primary, always-visible control (like solitaired.com's Four/Two/One
+       Suit tabs) rather than something buried in a settings menu — picking a pill starts a
+       new game at that difficulty directly. -->
+  <div class="pill-group" id="suitPills">
+    <div class="pill" data-suits="1">1 Suit</div>
+    <div class="pill" data-suits="2">2 Suits</div>
+    <div class="pill" data-suits="4">4 Suits</div>
+  </div>
+  <div id="controls">
+    <!-- Left of New Game: replays the SAME deal from move zero (no reshuffle) rather than
+         dealing a new one -- distinct from Undo (one step at a time) and New Game (a fresh
+         deck entirely). Needs the initial deal snapshotted somewhere to jump back to; see
+         initialState in the script below. -->
+    <button class="btn" id="btnRestart">🔄 <span class="label">Restart</span></button>
+    <button class="btn primary" id="btnNew">🂠 <span class="label">New Game</span></button>
+    <button class="btn" id="btnUndo">↩ <span class="label">Undo</span></button>
+    <button class="btn" id="btnHint">💡 <span class="label">Hint</span></button>
+    <div id="settingsWrap">
+      <button class="btn" id="btnSettings">⚙ <span class="label">Settings</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Not nested inside #topbar: #topbar's backdrop-filter makes IT the containing block for any
+     position:fixed descendant (a CSS behavior that trips people up — filter/backdrop-filter
+     act like transform for this), which was silently clipping this panel against topbar's own
+     (now scrollable) box instead of positioning it against the viewport like a plain top-level
+     fixed element does. Living out here with the other overlays (#confirmOverlay etc.) avoids
+     that entirely. -->
+<div id="settingsPanel">
+  <div class="row">
+    <span>Sound Effects</span>
+    <label class="switch"><input type="checkbox" id="soundToggle" checked><span class="slider"></span></label>
+  </div>
+  <!-- Populated from JS (CARD_BACK_THEMES) rather than hardcoded here, so adding a theme is a
+       one-line change in one place instead of keeping this markup and the JS list in sync. -->
+  <div class="swatch-row">
+    <span>Card Back Color</span>
+    <div class="swatch-group" id="cardBackSwatches"></div>
+  </div>
+  <div class="swatch-row">
+    <span>Table Background</span>
+    <div class="swatch-group" id="tableSwatches"></div>
+  </div>
+  <!-- Which suit the 1-Suit game is dealt in (2-Suit pairs it with a suit of the other color).
+       Changing it re-skins the current game in place -- no progress lost. -->
+  <div class="row">
+    <span>🎲 Random Suit Each Game</span>
+    <label class="switch"><input type="checkbox" id="randomSuitToggle" checked><span class="slider"></span></label>
+  </div>
+  <div class="swatch-row">
+    <span>Suit</span>
+    <div class="swatch-group" id="suitChoices"></div>
+    <span class="settingsNote" id="suitNote"></span>
+  </div>
+  <!-- "solve this for me" fits more naturally tucked away here than as a primary action next
+       to New Game/Undo/Hint. -->
+  <button class="btn" id="btnSolve">🤖 <span class="label">Auto-Solve</span></button>
+  <!-- Same reasoning as Auto-Solve -- a per-difficulty leaderboard is worth having but isn't
+       something you'd reach for mid-game, so it lives here rather than in the primary row. -->
+  <button class="btn" id="btnStats">📊 <span class="label">Best Times</span></button>
+</div>
+
+<div id="boardOuter">
+  <div id="board">
+    <div id="topRow">
+      <div id="stockArea">
+        <div class="stockPile" id="stockPile" title="Deal a new row">
+          <div class="stockCount" id="stockCount">50</div>
+        </div>
+        <div class="dealsLeft" id="dealsLeft">5 deals left</div>
+      </div>
+      <div id="topRowSpacer"></div>
+      <div id="foundations"></div>
+    </div>
+    <div id="columns"></div>
+  </div>
+</div>
+
+<!-- A normal flex sibling of #topbar/#boardOuter in body's column (not position:fixed) — it
+     just takes its own space at the bottom, so #boardOuter's flex:1 naturally shrinks to make
+     room and nothing overlaps. -->
+<div id="footerBar">
+  <div class="stat">Time<b id="statTime">00:00</b></div>
+  <div class="stat">Moves<b id="statMoves">0</b></div>
+  <div class="stat">Score<b id="statScore">500</b></div>
+  <div class="stat">Sets<b id="statSets">0/8</b></div>
+</div>
+
+<div id="toast"></div>
+
+<!-- Title/message/confirm-label are filled in from JS (showConfirm()) each time this opens --
+     shared between New Game and Restart, which need different wording over the same modal. -->
+<div id="confirmOverlay">
+  <div id="confirmCard">
+    <h2 id="confirmTitle">Start a new game?</h2>
+    <p id="confirmMsg">Current progress will be lost.</p>
+    <div id="confirmBtns">
+      <button class="btn" id="btnConfirmCancel">Cancel</button>
+      <button class="btn primary" id="btnConfirmYes">Start New Game</button>
+    </div>
+  </div>
+</div>
+
+<div id="winOverlay">
+  <div id="winCard">
+    <h2>🎉 You Win!</h2>
+    <p>All 8 sequences completed.</p>
+    <div class="winStats">
+      <div class="stat">Time<b id="winTime">00:00</b></div>
+      <div class="stat">Moves<b id="winMoves">0</b></div>
+      <div class="stat">Score<b id="winScore">0</b></div>
+    </div>
+    <!-- Filled from JS right before this overlay shows -- either a "new record" badge (one
+         per stat actually beaten) or, when this win didn't beat anything, a quiet reminder of
+         what the real best is for this difficulty. -->
+    <div class="winBest" id="winBest"></div>
+    <button class="btn primary" id="btnPlayAgain">Play Again</button>
+  </div>
+</div>
+
+<!-- Per-difficulty best time/best moves/win count, read from the same localStorage stats
+     object the win screen updates -- a separate key from the game-in-progress save, since it
+     needs to survive across new games instead of being overwritten by the next deal. -->
+<div id="statsOverlay">
+  <div id="statsCard">
+    <h2>🏆 Best Times</h2>
+    <div class="statsTable" id="statsTable"></div>
+    <button class="btn primary" id="btnStatsClose">Close</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  const RANKS = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
+  const RANK_PIP = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
+  const ALL_SUITS = [
+    {sym:'♠', color:'black'},
+    {sym:'♥', color:'red'},
+    {sym:'♦', color:'red'},
+    {sym:'♣', color:'black'}
+  ];
+
+  let state = null;
+  // Deep-cloned right after a new deal (in newGame()) and never touched again until the next
+  // deal -- what Restart jumps back to. Persisted alongside the rest of the save so Restart
+  // still works after a page reload, not just within the same tab session.
+  let initialState = null;
+  let history = [];
+  let selected = null; // {col, idx}
+  let dragCtx = null;
+  let lastTap = null;  // {col, idx, time} — for detecting a double-click / double-tap
+  let suitCount = 1;
+  let soundOn = true;
+  let timerHandle = null;
+  let elapsedSec = 0;
+  let cardW = 90, cardH = 126;
+  let audioCtx = null;
+
+  // ---------------- Card back color ----------------
+  // Each theme is just the two colors the facedown diagonal stripes (and the stock pile, which
+  // shares the same pair) alternate between. Adding a theme is exactly one line here; the
+  // swatch row in Settings and the CSS that consumes --back-1/--back-2 don't need touching.
+  const CARD_BACK_THEMES = {
+    purple:  { name: 'Purple',  c1: '#241a4a', c2: '#2f2260' },
+    navy:    { name: 'Navy',    c1: '#122647', c2: '#1c3a68' },
+    crimson: { name: 'Crimson', c1: '#3d0f1a', c2: '#5c1826' },
+    forest:  { name: 'Forest',  c1: '#0f2e20', c2: '#184a32' },
+    slate:   { name: 'Slate',   c1: '#22262c', c2: '#333941' },
+    teal:    { name: 'Teal',    c1: '#0a3436', c2: '#125054' }
+  };
+  let cardBackTheme = 'purple';
+
+  // ---------------- Table background ----------------
+  // f1/f2 = felt gradient (outer/center), d1/d2 = dialog + overlay tint, panel = settings panel.
+  const TABLE_THEMES = {
+    green:    { name: 'Classic Green', f1: '#0b3d2e', f2: '#0e5c40', d1: '#163d2c', d2: '#0c2a1e', panel: 'rgba(18,30,25,0.92)' },
+    blue:     { name: 'Blue',          f1: '#0b2442', f2: '#123a66', d1: '#16304f', d2: '#0b1c33', panel: 'rgba(14,24,38,0.92)' },
+    red:      { name: 'Casino Red',    f1: '#3d0b10', f2: '#651620', d1: '#4a161c', d2: '#2a0b0f', panel: 'rgba(36,14,17,0.92)' },
+    purple:   { name: 'Purple',        f1: '#25103d', f2: '#3d1d63', d1: '#2f1a4a', d2: '#1a0e2b', panel: 'rgba(28,18,40,0.92)' },
+    wood:     { name: 'Wood',          f1: '#2e1b0c', f2: '#5a3818', d1: '#3e2914', d2: '#24170a', panel: 'rgba(34,24,14,0.92)' },
+    charcoal: { name: 'Charcoal',      f1: '#141619', f2: '#2b2f35', d1: '#262a30', d2: '#16181c', panel: 'rgba(22,24,28,0.92)' }
+  };
+  let tableTheme = 'green';
+
+  // ---------------- Suit choice ----------------
+  // preferredSuit is the 1-Suit game's suit; 2-Suit adds SUIT_PARTNER[preferredSuit] (always the
+  // opposite color, so the two suits stay easy to tell apart).
+  const SUIT_PARTNER = { '♠':'♥', '♥':'♠', '♦':'♣', '♣':'♦' };
+  let preferredSuit = '♠';
+  // When on (the default), every New Game deals in a randomly picked suit; picking a specific
+  // suit in Settings turns it off, and the Random Suit switch turns it back on.
+  let randomSuit = true;
+  function suitBySym(sym){ return ALL_SUITS.find(s=>s.sym===sym) || ALL_SUITS[0]; }
+
+  // ---------------- Deck / Deal ----------------
+  function buildDeck(nSuits){
+    let suits;
+    let copies;
+    if(nSuits === 1){ suits = [suitBySym(preferredSuit)]; copies = 8; }
+    else if(nSuits === 2){ suits = [suitBySym(preferredSuit), suitBySym(SUIT_PARTNER[preferredSuit])]; copies = 4; }
+    else { suits = ALL_SUITS; copies = 2; }
+    const deck = [];
+    let uid = 0;
+    for(let c=0;c<copies;c++){
+      for(const s of suits){
+        for(let r=1;r<=13;r++){
+          deck.push({ id: uid++, suit: s.sym, color: s.color, rank: r, up:false });
+        }
+      }
+    }
+    return deck;
+  }
+
+  function shuffle(arr){
+    for(let i=arr.length-1;i>0;i--){
+      const j = Math.floor(Math.random()*(i+1));
+      [arr[i],arr[j]] = [arr[j],arr[i]];
+    }
+    return arr;
+  }
+
+  function newGame(nSuits){
+    if(typeof nSuits === 'number') suitCount = nSuits;
+    if(randomSuit) preferredSuit = ALL_SUITS[Math.floor(Math.random()*ALL_SUITS.length)].sym;
+    const deck = shuffle(buildDeck(suitCount));
+    const columns = Array.from({length:10}, ()=>[]);
+    let idx = 0;
+    for(let c=0;c<10;c++){
+      const count = c<4 ? 6 : 5;
+      for(let i=0;i<count;i++){
+        const card = deck[idx++];
+        card.up = (i === count-1);
+        columns[c].push(card);
+      }
+    }
+    const stock = deck.slice(idx);
+    state = {
+      columns,
+      stock,
+      completed: [], // array of {suit, color}
+      score: 500,
+      moves: 0
+    };
+    // Snapshot the untouched deal -- Restart replays exactly this, not a fresh shuffle. Deep
+    // clone (not a reference) so subsequent moves mutating state.columns/stock can never leak
+    // into it.
+    initialState = JSON.parse(JSON.stringify({
+      columns: state.columns,
+      stock: state.stock,
+      completed: state.completed,
+      score: state.score,
+      moves: state.moves
+    }));
+    history = [];
+    selected = null;
+    elapsedSec = 0;
+    stopWinAnimation();
+    updateSuitPillUI();
+    startTimer();
+    render();
+    updateStats();
+  }
+
+  // Jumps back to the exact deal newGame() dealt, undoing every move made since -- not a new
+  // shuffle (that's New Game) and not a single step back (that's Undo).
+  function restart(){
+    if(!initialState) return; // shouldn't happen once a game has been dealt, but don't throw
+    document.getElementById('winOverlay').classList.remove('show'); // close it if a win is showing
+    stopWinAnimation();
+    state = JSON.parse(JSON.stringify(initialState));
+    history = [];
+    selected = null;
+    elapsedSec = 0;
+    startTimer();
+    render();
+    updateStats();
+    toast('Restarted to the initial deal');
+  }
+
+  // ---------------- History / Undo ----------------
+  function snapshot(){
+    return JSON.parse(JSON.stringify({
+      columns: state.columns,
+      stock: state.stock,
+      completed: state.completed,
+      score: state.score,
+      moves: state.moves
+    }));
+  }
+  function pushHistory(){
+    history.push(snapshot());
+    if(history.length > 300) history.shift();
+  }
+  function undo(){
+    if(history.length === 0){ toast("Nothing to undo"); return; }
+    const prev = history.pop();
+    state.columns = prev.columns;
+    state.stock = prev.stock;
+    state.completed = prev.completed;
+    state.score = prev.score;
+    state.moves = prev.moves;
+    selected = null;
+    render();
+    updateStats();
+  }
+
+  // ---------------- Rules helpers ----------------
+  function findValidStart(colIdx){
+    const arr = state.columns[colIdx];
+    if(arr.length === 0) return 0;
+    let i = arr.length - 1;
+    if(!arr[i].up) return arr.length; // no draggable card (shouldn't happen)
+    while(i > 0 && arr[i-1].up && arr[i-1].suit === arr[i].suit && arr[i-1].rank === arr[i].rank + 1){
+      i--;
+    }
+    return i;
+  }
+
+  function canDropSequence(seq, destColIdx){
+    const dest = state.columns[destColIdx];
+    if(dest.length === 0) return true;
+    const top = dest[dest.length-1];
+    return top.up && top.rank === seq[0].rank + 1;
+  }
+
+  function performMove(fromCol, fromIdx, toCol){
+    if(fromCol === toCol) return false;
+    const arr = state.columns[fromCol];
+    if(fromIdx < 0 || fromIdx >= arr.length || !arr[fromIdx].up) return false;
+    const validStart = findValidStart(fromCol);
+    if(fromIdx < validStart) return false;
+    const seq = arr.slice(fromIdx);
+    if(!canDropSequence(seq, toCol)) return false;
+
+    pushHistory();
+    state.columns[fromCol] = arr.slice(0, fromIdx);
+    if(state.columns[fromCol].length){
+      state.columns[fromCol][state.columns[fromCol].length-1].up = true;
+    }
+    state.columns[toCol] = state.columns[toCol].concat(seq);
+    state.moves++;
+    state.score = state.score - 1;
+    selected = null; // any successful move invalidates a pending selection
+    const completedAny = checkCompletedSequences();
+    render();
+    updateStats();
+    playSound(completedAny ? 'complete' : 'move');
+    return true;
+  }
+
+  function checkCompletedSequences(){
+    let any = false;
+    for(let c=0;c<10;c++){
+      const arr = state.columns[c];
+      if(arr.length >= 13){
+        const tail = arr.slice(-13);
+        if(tail[0].rank === 13 && tail.every(cd=>cd.up)){
+          let ok = true;
+          for(let k=0;k<12;k++){
+            if(tail[k].suit !== tail[k+1].suit || tail[k].rank !== tail[k+1].rank + 1){ ok = false; break; }
+          }
+          if(ok && tail[12].rank === 1){
+            state.columns[c] = arr.slice(0, arr.length-13);
+            if(state.columns[c].length) state.columns[c][state.columns[c].length-1].up = true;
+            state.completed.push({suit: tail[0].suit, color: tail[0].color});
+            state.score += 100;
+            any = true;
+          }
+        }
+      }
+    }
+    if(state.completed.length >= 8){
+      setTimeout(triggerWin, 300);
+    }
+    return any;
+  }
+
+  function dealStock(){
+    // No "every column needs a card first" restriction — dealing onto an empty column just
+    // gives it its first (face-up) card like any other, same as pushing onto a non-empty one.
+    if(state.stock.length === 0){
+      toast("No cards left in the stock");
+      return;
+    }
+    pushHistory();
+    for(let c=0;c<10;c++){
+      const card = state.stock.pop();
+      card.up = true;
+      state.columns[c].push(card);
+    }
+    state.moves++;
+    checkCompletedSequences();
+    render();
+    updateStats();
+    playSound('deal');
+  }
+
+  // ---------------- Hint ----------------
+  function findHint(){
+    // Ranked: uncovering a face-down card beats extending a same-suit run, which beats any
+    // other legal move; shifting a whole column into an empty one is the last resort.
+    let sameSuit = null, other = null, filler = null;
+    for(let from=0; from<10; from++){
+      const arr = state.columns[from];
+      if(arr.length === 0) continue;
+      const validStart = findValidStart(from);
+      for(let start = arr.length-1; start >= validStart; start--){
+        const seq = arr.slice(start);
+        for(let to=0; to<10; to++){
+          if(to === from) continue;
+          if(!canDropSequence(seq, to)) continue;
+          const move = {from, start, to, len:seq.length};
+          if(start > 0 && !arr[start-1].up) return move; // reveals a hidden card
+          const dest = state.columns[to];
+          if(dest.length === 0){
+            // Relocating an entire column to another empty column achieves nothing.
+            if(arr.length !== seq.length && !filler) filler = move;
+            continue;
+          }
+          if(dest[dest.length-1].suit === seq[0].suit){ if(!sameSuit) sameSuit = move; }
+          else if(!other) other = move;
+        }
+      }
+    }
+    return sameSuit || other || filler;
+  }
+
+  function hint(){
+    const move = findHint();
+    if(move){
+      const cardEl = document.querySelector(`.card[data-col="${move.from}"][data-idx="${move.start}"]`);
+      const colEl = document.querySelector(`.column[data-col="${move.to}"]`);
+      if(cardEl) cardEl.classList.add('hint-glow');
+      if(colEl) colEl.classList.add('drop-hover');
+      const card = state.columns[move.from][move.start];
+      toast(`Try moving ${RANKS[card.rank-1]}${card.suit} to column ${move.to+1}`);
+      setTimeout(()=>{
+        if(cardEl) cardEl.classList.remove('hint-glow');
+        if(colEl) colEl.classList.remove('drop-hover');
+      }, 1700);
+      return;
+    }
+    if(state.stock.length > 0){
+      const el = document.getElementById('stockPile');
+      el.classList.add('hint-glow');
+      toast('No tableau moves found — try dealing from the stock');
+      setTimeout(()=>el.classList.remove('hint-glow'), 1700);
+      return;
+    }
+    toast('No moves available. Try Undo.');
+  }
+
+  // ---------------- Rendering ----------------
+  function computeCardSize(){
+    const boardEl = document.getElementById('board');
+    const boardOuterEl = document.getElementById('boardOuter');
+    const width = Math.min(boardEl.clientWidth || window.innerWidth, 1880);
+    // A flat 46px floor (the old value) needs ~600px of width for 10 columns to fit without
+    // overflowing — comfortably more than a phone's width in portrait, which is what forced
+    // landscape mode to actually see all 10 columns. A single breakpoint that swaps straight
+    // from a small floor to 46px also just relocates the same problem to whatever width sits
+    // right above the switch (a hard 46px floor still doesn't fit at, say, 620px). So there's
+    // no hardcoded floor at all here — cardW is simply however much of the actual available
+    // width is left after gaps, continuously, for every viewport size; only a low absolute
+    // minimum (22px) exists, purely so cards can never shrink to something un-tappable, and
+    // it's small enough to never itself be the thing causing overflow.
+    // #columns' gap is set here (not in CSS) so this stays the one source of truth for both.
+    // Tight like solitaired.com's -- the columns pack close together instead of leaving visible
+    // green gutters between them, freeing up more of the board's width for the cards themselves.
+    const gap = window.innerWidth <= 900 ? 2 : 6;
+    // Must match flexbox's OWN math for a `flex:1 1 0` row exactly (available width minus all
+    // 9 gaps, split 10 ways) — not just width/10 minus a gap. With no upper cap, a `.column`'s
+    // real flex-computed width and cardW were quietly diverging once the old 148px cap kicked
+    // in (columns kept growing with the viewport, capped cards didn't), which is exactly what
+    // was throwing the foundation-row-to-tableau alignment off at wide viewports: the row above
+    // was built from the (smaller, capped) card width while the row below used the (larger,
+    // uncapped) true column width. `width` is already bounded to 1880px above, so this has a
+    // natural ceiling on its own without an artificial second cap fighting it.
+    const perCol = (width - gap * 9) / 10;
+    cardW = Math.max(22, perCol);
+    cardH = Math.round(cardW * 1.4);
+
+    // Width alone can size a card taller than the board actually has room for on a short/
+    // landscape viewport (phones in landscape especially) -- the initial deal (up to 6 stacked
+    // cards in the longest starting column) would then already need a scroll before the player
+    // has made a single move. Cap card height so that worst case still fits without scrolling.
+    // #boardOuter stays overflow:auto for runs built up later during play -- once a run gets
+    // long enough, needing to scroll is normal and expected (true of every spider solitaire
+    // implementation, this reference site included) -- this only protects the starting view.
+    //
+    // The budget has to account for #topRow too, not just the tableau: its stock/foundation
+    // slots are also cardH-tall and it sits above the columns inside the same #boardOuter box
+    // (plus its own 24px margin-bottom) -- ignoring it understated how little room the tableau
+    // actually gets, which is why columns kept overflowing even after this cap was first added.
+    // topRow's own height depends on the very cardH being solved for here, so this is one
+    // combined budget (topRow's cardH + the first card of the tallest starting column, plus
+    // minimum-floor spacing for the rest of that column) rather than two separate ones. The
+    // "rest of that column" is now the tight facedown stack (see faceDownSpacingFor()), not the
+    // faceup fan spacing -- a fresh deal's longest column is 5 facedown cards + 1 faceup, so the
+    // floor used for this estimate is that near-flat facedown gap, not the older, much larger
+    // uniform spacing this cap was originally written against.
+    if(boardOuterEl){
+      const style = getComputedStyle(boardOuterEl);
+      const padV = (parseFloat(style.paddingTop)||0) + (parseFloat(style.paddingBottom)||0);
+      const topRowMargin = 24;
+      const initialMaxDepth = 6;
+      const minDownGap = 8; // matches faceDownSpacingFor()'s own floor
+      const totalAvail = boardOuterEl.clientHeight - padV - topRowMargin;
+      const maxCardH = (totalAvail - minDownGap * (initialMaxDepth - 1)) / 2;
+      if(totalAvail > 0 && cardH > maxCardH && maxCardH > 34){
+        cardH = Math.max(34, Math.round(maxCardH));
+        cardW = Math.max(22, Math.round(cardH / 1.4));
+      }
+    }
+
+    document.documentElement.style.setProperty('--cw', cardW+'px');
+    document.documentElement.style.setProperty('--ch', cardH+'px');
+    const columnsEl = document.getElementById('columns');
+    columnsEl.style.gap = gap + 'px';
+    // Columns are flex:1 and would keep shrinking past the card width on narrow screens,
+    // overlapping cards into their neighbours. Pin a floor and let the board scroll instead —
+    // only actually needed below ~350px now that the floor itself scales down with the screen.
+    columnsEl.style.minWidth = ((cardW * 10) + gap * 9) + 'px';
+    // Row 1 (stock + foundations) uses this exact same gap, on both the outer #topRow (the
+    // one gap between the stock slot and the foundations block) and the inner #foundations
+    // (between each of its 8 slots) — that's what keeps every slot lined up with the tableau
+    // column directly beneath it.
+    document.getElementById('topRow').style.gap = gap + 'px';
+    document.getElementById('foundations').style.gap = gap + 'px';
+  }
+
+  // Facedown cards carry no rank/suit info, and, unlike the revealed run below them,
+  // solitaired.com doesn't fan them out much at all -- they sit as a near-solid stack. Still,
+  // each one needs its own visible sliver so the player can actually count how deep the pile
+  // is (a real, useful piece of information -- 3px was too tight to read as separate cards,
+  // just a flat block).
+  function faceDownSpacingFor(){
+    return Math.max(8, Math.round(cardH * 0.07));
+  }
+
+  // A single constant gap, the same for every column no matter how many cards that particular
+  // column happens to have. The previous version recomputed this PER COLUMN from that column's
+  // own card count, shrinking it as the count grew -- so two columns with different-length runs
+  // read as different densities side by side, which looks broken even though each one was
+  // "correct" in isolation (confirmed via screenshot: the fan gets visibly tighter in the
+  // longer columns). #boardOuter stays overflow:auto and a genuinely tall column scrolls --
+  // normal for spider solitaire once a run gets long, not something to paper over by warping
+  // every column's spacing to whichever one is currently tallest.
+  function faceUpSpacingFor(){
+    // Must stay tall enough to fully contain the corner label (a single row: top offset 4px +
+    // font-size 0.28*cw, cw being ~cardH/1.4) with real margin to spare -- this is a hit-testing
+    // correctness requirement, not just a look: whatever's visibly readable in a covered card's
+    // sliver has to be within that same card's actual hit-tested band, or a tap aimed at the
+    // label lands on the card covering it instead (confirmed via screen recording).
+    return Math.max(20, Math.round(cardH * 0.23));
+  }
+
+  // Top offset (px, relative to the column) for every card in the column, mixing the two
+  // spacings above: near-flush through the facedown stack, then the normal fan once the faceup
+  // run starts. Returns both the per-card offsets and the column's total content height (last
+  // card's top + one full card height) so callers don't have to re-derive it.
+  function cardTops(arr){
+    const n = arr.length;
+    if(n === 0) return { tops: [], height: cardH };
+    const tops = new Array(n);
+    let y = 0;
+    let firstUp = arr.findIndex(c => c.up);
+    if(firstUp === -1) firstUp = n;
+    const upGap = faceUpSpacingFor();
+    const downGap = faceDownSpacingFor();
+    for(let i=0;i<n;i++){
+      tops[i] = y;
+      y += arr[i].up ? upGap : downGap;
+    }
+    return { tops, height: tops[n-1] + cardH };
+  }
+
+  function render(){
+    // FLIP-style animation: snapshot where every card is (and whether it's face up) BEFORE
+    // the DOM gets torn down and rebuilt at its new resting positions, then reconcile by id
+    // afterward — renderColumns() always rebuilds #columns from scratch, so without this every
+    // move/deal/undo/reveal would just teleport cards straight to their new spot with no
+    // motion at all.
+    const prevSnapshot = captureCardSnapshot();
+    computeCardSize();
+    renderStock();
+    renderFoundations();
+    renderColumns();
+    animateRenderDiff(prevSnapshot);
+    saveGame();
+  }
+
+  function captureCardSnapshot(){
+    const map = new Map();
+    document.querySelectorAll('#columns .card').forEach(el=>{
+      map.set(el.dataset.id, { rect: el.getBoundingClientRect(), up: el.classList.contains('faceup') });
+    });
+    return map;
+  }
+
+  function animateRenderDiff(prev){
+    if(!prev || prev.size === 0) return; // first render ever — nothing to animate from
+    const stockEl = document.getElementById('stockPile');
+    const stockRect = stockEl ? stockEl.getBoundingClientRect() : null;
+    document.querySelectorAll('#columns .card').forEach(el=>{
+      const before = prev.get(el.dataset.id);
+      const afterRect = el.getBoundingClientRect();
+      if(before){
+        const dx = before.rect.left - afterRect.left;
+        const dy = before.rect.top - afterRect.top;
+        if(Math.abs(dx) > 1 || Math.abs(dy) > 1){
+          el.style.transition = 'none';
+          el.style.transform = `translate(${dx}px, ${dy}px)`;
+          void el.offsetHeight; // force a reflow so the jump above renders before we animate away from it
+          el.style.transition = 'transform 0.26s cubic-bezier(0.2,0.7,0.3,1)';
+          el.style.transform = '';
+          // Safety net: if this transition never actually gets composited/painted (seen on some
+          // devices/browser states — the card is otherwise left permanently stuck mid-animation,
+          // visually offset from its real position and, since its BOX size can also be affected,
+          // wrong for hit-testing too), force the intended end state after the transition's own
+          // duration regardless. A no-op on top of a transition that played normally.
+          settleAfter(el, 300);
+        }
+        if(!before.up && el.classList.contains('faceup')){
+          // This exact card (same id) just turned face up — a same-suit run finishing above
+          // it, an undo, a move revealing what was underneath. Give it a quick flip flourish.
+          el.classList.add('flip-reveal');
+          el.addEventListener('animationend', function onEnd(){
+            el.classList.remove('flip-reveal');
+            el.removeEventListener('animationend', onEnd);
+          });
+        }
+      } else if(stockRect){
+        // Brand-new card that didn't exist a moment ago — the only way that happens is a deal,
+        // so slide it in from the stock pile instead of having it just appear in place.
+        const dx = stockRect.left - afterRect.left;
+        const dy = stockRect.top - afterRect.top;
+        el.style.transition = 'none';
+        el.style.transform = `translate(${dx}px, ${dy}px) scale(0.82)`;
+        el.style.opacity = '0.35';
+        void el.offsetHeight;
+        el.style.transition = 'transform 0.3s cubic-bezier(0.2,0.7,0.3,1), opacity 0.3s ease';
+        el.style.transform = '';
+        el.style.opacity = '';
+        settleAfter(el, 340);
+      }
+    });
+  }
+
+  // Forces a card's transform/opacity/transition back to their unset (CSS-default) state after
+  // `ms` — a safety net for animateRenderDiff(). Harmless if the transition already completed
+  // normally (clearing already-cleared inline styles is a no-op); guards against the rare case
+  // where it doesn't, which otherwise permanently strands the card visually offset/shrunken and,
+  // since its rendered box size is affected too, wrong for hit-testing.
+  function settleAfter(el, ms){
+    setTimeout(()=>{
+      el.style.transition = '';
+      el.style.transform = '';
+      el.style.opacity = '';
+    }, ms);
+  }
+
+  function renderStock(){
+    const pileEl = document.getElementById('stockPile');
+    const countEl = document.getElementById('stockCount');
+    const dealsEl = document.getElementById('dealsLeft');
+    const dealsLeft = Math.floor(state.stock.length / 10);
+    countEl.textContent = state.stock.length;
+    dealsEl.textContent = dealsLeft + (dealsLeft===1 ? ' deal left' : ' deals left');
+    pileEl.classList.toggle('empty', state.stock.length === 0);
+  }
+
+  function renderFoundations(){
+    const wrap = document.getElementById('foundations');
+    wrap.innerHTML = '';
+    for(let i=0;i<8;i++){
+      const slot = document.createElement('div');
+      slot.className = 'foundSlot';
+      const done = state.completed[i];
+      if(done){
+        slot.classList.add('filled', done.color);
+        slot.textContent = 'K' + done.suit;
+      }
+      wrap.appendChild(slot);
+    }
+  }
+
+  function renderColumns(){
+    const wrap = document.getElementById('columns');
+    wrap.innerHTML = '';
+    for(let c=0;c<10;c++){
+      const colEl = document.createElement('div');
+      colEl.className = 'column';
+      colEl.dataset.col = c;
+      const arr = state.columns[c];
+      if(arr.length === 0){
+        colEl.classList.add('empty-slot');
+        const ph = document.createElement('div');
+        ph.className = 'placeholder-hint';
+        ph.textContent = '';
+        colEl.appendChild(ph);
+      }
+      const { tops, height } = cardTops(arr);
+      // Floor is just "one card tall" (so an empty/short column still reads as a slot), not a
+      // fixed 260px -- that leftover value from before the responsive-height fix in
+      // faceUpSpacingFor() was overriding it, forcing every column back to a tall size
+      // regardless of how much vertical room the board actually had (the exact cause of columns
+      // overflowing off the visible/scrollable area in landscape).
+      colEl.style.minHeight = Math.max(cardH, height) + 'px';
+
+      arr.forEach((card, idx) => {
+        const cardEl = buildCardEl(card, c, idx);
+        cardEl.style.top = tops[idx] + 'px';
+        cardEl.style.zIndex = idx;
+        if(selected && selected.col === c && idx >= selected.idx){
+          cardEl.classList.add('selected');
+          // Only lifts when the TOUCHED card itself is the bottom/uncovered one -- i.e. the
+          // selected group is just that one card, with nothing stacked after it. Checking the
+          // touched card's own index (selected.idx), not this card's, matters: selecting the
+          // top of a 3-card run still makes the bottom card part of the group and idx === last
+          // for IT, but the group as a whole is still covered (by picking a card partway up),
+          // so nothing in it should move.
+          if(selected.idx === arr.length - 1) cardEl.classList.add('lift');
+        }
+        colEl.appendChild(cardEl);
+      });
+
+      colEl.addEventListener('pointerdown', (e)=> onColumnPointerDown(e, c));
+
+      wrap.appendChild(colEl);
+    }
+  }
+
+  function buildCardEl(card, col, idx){
+    const el = document.createElement('div');
+    el.dataset.col = col;
+    el.dataset.idx = idx;
+    el.dataset.id = card.id; // stable across renders — lets animateRender() track this exact card
+    if(!card.up){
+      el.className = 'card facedown';
+      const icon = document.createElement('div');
+      icon.className = 'spidericon';
+      icon.textContent = '🕷️';
+      el.appendChild(icon);
+    } else {
+      el.className = 'card faceup ' + card.color;
+      const rankStr = RANK_PIP[card.rank-1];
+      const tl = document.createElement('div');
+      tl.className = 'corner';
+      tl.textContent = rankStr;
+      const wm = document.createElement('div');
+      wm.className = 'watermark';
+      wm.textContent = card.suit;
+      el.appendChild(tl); el.appendChild(wm);
+    }
+    return el;
+  }
+
+  // ---------------- Interaction: drag + tap ----------------
+  // Picking up a card is handled at the COLUMN level (not with a listener per card), with the
+  // touched card resolved by exact geometry (which card's own band of the fan the Y position
+  // falls in — the same thing the browser's native hit-test against the visible DOM sliver
+  // already resolves to, just computed directly). Several rounds of adding "forgiveness" here
+  // to make thin slivers easier to hit on a touchscreen kept trading one bug for another (most
+  // recently: even a clean, deliberate touch on a run's second card still got attributed to
+  // the first, grabbing one card more than intended). Standard solitaire implementations
+  // (solitaired.com included) don't try to guess intent this way — touch the card you want,
+  // get exactly that card and everything below it. Bigger cards and more generous fan spacing
+  // (both already in place) are what actually make that comfortable to hit, not a heuristic.
+  //
+  // `tops` (from cardTops()) is no longer evenly spaced — the facedown stack and the faceup fan
+  // use different gaps — so this is a lookup against those actual offsets instead of a single
+  // division. tops is non-decreasing, and z-index rises with index, so the frontmost card whose
+  // band contains relY is simply the last one whose own top is still <= relY.
+  function idxAtY(tops, relY){
+    const n = tops.length;
+    if(n === 0) return -1;
+    let idx = 0;
+    for(let i=1;i<n;i++){
+      if(tops[i] <= relY) idx = i; else break;
+    }
+    return idx;
+  }
+
+  function onColumnPointerDown(e, col){
+    if(dragCtx) return; // a gesture is already in progress (e.g. a second finger) — ignore
+    const arr = state.columns[col];
+    if(arr.length === 0){
+      onColumnEmptyTap(col);
+      return;
+    }
+    const colEl = e.currentTarget;
+    const rect = colEl.getBoundingClientRect();
+    const { tops } = cardTops(arr);
+    const relY = e.clientY - rect.top;
+    if(relY > tops[tops.length - 1] + cardH){
+      // Below the fanned stack, in the column's own blank space — treat as "drop here".
+      onColumnEmptyTap(col);
+      return;
+    }
+    const idx = idxAtY(tops, relY);
+    const card = arr[idx];
+    if(!card) return; // shouldn't happen, but don't throw
+    const validStart = findValidStart(col);
+
+    // This card can't be picked up (face down, or buried under a broken run). If a stack is
+    // already selected, read the click as "drop it on this column".
+    if(!card.up || idx < validStart){
+      if(selected){
+        e.preventDefault();
+        const from = selected;
+        selected = null;
+        if(!performMove(from.col, from.idx, col)) render();
+      }
+      return;
+    }
+
+    e.preventDefault();
+    const colEls = document.querySelectorAll(`.card[data-col="${col}"]`);
+    const els = [];
+    colEls.forEach(el=>{
+      const i = parseInt(el.dataset.idx, 10);
+      if(i >= idx) els.push(el);
+    });
+    const rects = els.map(el => el.getBoundingClientRect());
+
+    dragCtx = {
+      col, idx,
+      pointerId: e.pointerId,
+      startX: e.clientX, startY: e.clientY,
+      moved: false,
+      els, rects,
+      lastX: e.clientX, lastY: e.clientY
+    };
+
+    if(colEl.setPointerCapture){
+      try{ colEl.setPointerCapture(e.pointerId); }catch(err){}
+    }
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
+  }
+
+  function onPointerMove(e){
+    if(!dragCtx || e.pointerId !== dragCtx.pointerId) return;
+    const dx = e.clientX - dragCtx.startX;
+    const dy = e.clientY - dragCtx.startY;
+    dragCtx.lastX = e.clientX; dragCtx.lastY = e.clientY;
+
+    // 5px was too sensitive for a real finger -- ordinary touchscreen jitter during what's
+    // meant to be a simple tap-to-select was enough to cross it, silently turning every tap
+    // into a (same-column, always-failing) drag attempt instead: the touched card's whole
+    // covered group would flash into the scaled/rotated "dragging" look and then snap back,
+    // which is exactly the unwanted "lift" this was supposed to have already stopped -- the
+    // .selected/.lift fix never even got a chance to run, because dragCtx.moved was already
+    // true by the time the finger lifted. 10px is a standard touch-slop distance (close to
+    // both Android's and iOS's own defaults) that a real tap essentially never crosses.
+    if(!dragCtx.moved && (Math.abs(dx) > 10 || Math.abs(dy) > 10)){
+      dragCtx.moved = true;
+      // Switch the dragged cards to position:fixed IN PLACE — no DOM reparenting. None of
+      // the ancestors (.column/#columns/#board/#boardOuter/body) use a transform, filter or
+      // similar property that would turn position:fixed into a local/contained fix instead
+      // of a viewport-relative one, so this escapes #boardOuter's scroll clipping exactly
+      // like appending to <body> did. Reparenting elements mid-gesture is a known trigger for
+      // mobile WebKit/Chrome to silently drop the touch's pointer capture, which is very
+      // likely why multi-card drags (more elements moved = more chances to trip it) were
+      // failing on phones while single-card drags kept working.
+      dragCtx.els.forEach((el, i) => {
+        const r = dragCtx.rects[i];
+        el.style.position = 'fixed';
+        el.style.left = r.left + 'px';
+        el.style.top = r.top + 'px';
+        el.style.width = r.width + 'px';
+        el.style.height = r.height + 'px';
+        el.style.pointerEvents = 'none';
+        // dragCtx.els is in ascending source order (i=0 is the earliest/"back" card of the
+        // grabbed run), so a rising z-index here keeps the run's own front-to-back order
+        // intact while airborne — the back card can never cover the ones after it.
+        el.style.zIndex = 9000 + i;
+        el.classList.add('dragging');
+      });
+    }
+
+    if(dragCtx.moved){
+      dragCtx.els.forEach((el, i) => {
+        const r = dragCtx.rects[i];
+        el.style.left = (r.left + dx) + 'px';
+        el.style.top = (r.top + dy) + 'px';
+      });
+      document.querySelectorAll('.column.drop-hover').forEach(c=>c.classList.remove('drop-hover'));
+      const under = document.elementFromPoint(e.clientX, e.clientY);
+      const colEl = under && under.closest ? under.closest('.column') : null;
+      if(colEl) colEl.classList.add('drop-hover');
+    }
+  }
+
+  function onPointerUp(e){
+    if(!dragCtx || e.pointerId !== dragCtx.pointerId) return;
+    window.removeEventListener('pointermove', onPointerMove);
+    window.removeEventListener('pointerup', onPointerUp);
+    window.removeEventListener('pointercancel', onPointerUp);
+
+    document.querySelectorAll('.column.drop-hover').forEach(c=>c.classList.remove('drop-hover'));
+
+    // Use the pointerup event's OWN coordinates for hit-testing the drop target, not the
+    // last stored pointermove sample. A fast drag — or one over a laggy remote connection
+    // (X11 forwarding, RDP, etc.) that coalesces/drops intermediate move events — can deliver
+    // its true final position only in the 'up' event; using stale lastX/lastY there made
+    // longer drags (i.e. picking up a multi-card stack and carrying it further) land on the
+    // wrong column, or no column at all, far more often than short single-card drags.
+    const dropX = (typeof e.clientX === 'number') ? e.clientX : dragCtx.lastX;
+    const dropY = (typeof e.clientY === 'number') ? e.clientY : dragCtx.lastY;
+
+    if(dragCtx.moved){
+      // The dragged elements were never reparented, so there's nothing to detach here —
+      // performMove()/the failure branch below both end in render(), which wipes and
+      // rebuilds #columns from scratch and discards these elements along with it.
+      const under = document.elementFromPoint(dropX, dropY);
+      const colEl = under && under.closest ? under.closest('.column') : null;
+      let success = false;
+      if(colEl){
+        const targetCol = parseInt(colEl.dataset.col, 10);
+        success = performMove(dragCtx.col, dragCtx.idx, targetCol);
+      }
+      if(!success){
+        selected = null;
+        render();
+      }
+    } else {
+      handleTap(dragCtx.col, dragCtx.idx);
+    }
+    dragCtx = null;
+  }
+
+  function handleTap(col, idx){
+    const now = Date.now();
+    const isSecondTap = lastTap && lastTap.col === col && lastTap.idx === idx && (now - lastTap.time) < 400;
+    lastTap = null;
+
+    if(isSecondTap){ autoMove(col, idx); return; }
+
+    if(selected && selected.col === col && selected.idx === idx){
+      selected = null; // tapping the selected card again (slowly) puts it back down
+      render();
+      return;
+    }
+    if(selected){
+      const from = selected;
+      selected = null;
+      const success = performMove(from.col, from.idx, col);
+      if(!success){
+        const validStart = findValidStart(col);
+        if(idx >= validStart){
+          selected = {col, idx};
+          lastTap = {col, idx, time: now};
+        }
+        render();
+      }
+      return;
+    }
+    const validStart = findValidStart(col);
+    if(idx >= validStart){
+      selected = {col, idx};
+      lastTap = {col, idx, time: now};
+      render();
+    }
+  }
+
+  function onColumnEmptyTap(col){
+    if(!selected) return;
+    const from = selected;
+    selected = null;
+    lastTap = null;
+    if(!performMove(from.col, from.idx, col)) render(); // clear the stale highlight
+  }
+
+  // Double-click / double-tap: send the run starting at this card to the best legal column.
+  function autoMove(col, idx){
+    const arr = state.columns[col];
+    if(idx >= arr.length || idx < findValidStart(col)) return;
+    const seq = arr.slice(idx);
+    let bestTo = -1, bestScore = -1;
+    for(let to=0; to<10; to++){
+      if(to === col || !canDropSequence(seq, to)) continue;
+      const dest = state.columns[to];
+      // Prefer continuing a same-suit run, then any card landing, and only then burn an empty column.
+      const score = dest.length === 0 ? 1 : (dest[dest.length-1].suit === seq[0].suit ? 3 : 2);
+      if(score > bestScore){ bestScore = score; bestTo = to; }
+    }
+    if(bestTo >= 0){ performMove(col, idx, bestTo); return; }
+    selected = null;
+    render();
+    const el = document.querySelector(`.card[data-col="${col}"][data-idx="${idx}"]`);
+    if(el){ el.classList.add('shake'); setTimeout(()=>el.classList.remove('shake'), 400); }
+  }
+
+  // ---------------- Stats / Timer ----------------
+  function updateStats(){
+    document.getElementById('statMoves').textContent = state.moves;
+    document.getElementById('statScore').textContent = state.score;
+    document.getElementById('statSets').textContent = state.completed.length + '/8';
+    document.getElementById('btnUndo').disabled = history.length === 0;
+    // Only actually disabled for an old saved game from before this feature shipped, whose
+    // save data has no initialState to jump back to -- otherwise always available, even at
+    // move zero (restarting an already-fresh deal is just a harmless no-op).
+    document.getElementById('btnRestart').disabled = !initialState;
+  }
+
+  function startTimer(startAt){
+    if(timerHandle) clearInterval(timerHandle);
+    elapsedSec = typeof startAt === 'number' ? startAt : 0;
+    updateTimeDisplay();
+    timerHandle = setInterval(()=>{
+      elapsedSec++;
+      updateTimeDisplay();
+      saveGame();
+    }, 1000);
+  }
+  // Shared with the win-screen/stats-table formatting below, so a win's time and the "best
+  // time" it's compared against are always rendered exactly the same way.
+  function formatTime(sec){
+    const m = Math.floor(sec/60).toString().padStart(2,'0');
+    const s = (sec%60).toString().padStart(2,'0');
+    return `${m}:${s}`;
+  }
+  function updateTimeDisplay(){
+    document.getElementById('statTime').textContent = formatTime(elapsedSec);
+  }
+
+  // `isNewWin` distinguishes an actual completion (record the win, show badges) from the
+  // redundant call restoreGame() makes below when a saved game happens to already be finished
+  // (reloading the page mid-win-screen, before "Play Again" resets things) — without this,
+  // that reload would count as a second win for the same completed board.
+  function triggerWin(isNewWin = true){
+    if(timerHandle) clearInterval(timerHandle);
+    document.getElementById('winTime').textContent = formatTime(elapsedSec);
+    document.getElementById('winMoves').textContent = state.moves;
+    document.getElementById('winScore').textContent = state.score;
+    if(isNewWin){
+      const { newBestTime, newBestMoves } = recordWin();
+      renderWinBest(newBestTime, newBestMoves);
+      playWinSound(playWinAnimation());
+    } else {
+      renderWinBest(false, false);
+    }
+    document.getElementById('winOverlay').classList.add('show');
+  }
+
+  // ---------------- Win animations ----------------
+  // Many celebrations, picked truly at random each win (see nextFromBag -- it only avoids the
+  // last few), so the player never knows what's coming. Each entry is
+  // init(w,h) -> state plus step(state, ctx, w, h, t, dt) -> "still running?", driven by one
+  // shared requestAnimationFrame loop (dt is in 60fps-frame units, so speeds are per-frame).
+  const WIN_ANIM_KEY = 'spiderSolitaireWinAnimV3';
+  const WIN_SOUND_KEY = 'spiderSolitaireWinSoundV2';
+  let winAnim = null;
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+
+  function roundRectPath(ctx, x, y, w, h, r){
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  function drawMiniCard(ctx, x, y, cw, ch, rank, suit){
+    roundRectPath(ctx, x, y, cw, ch, cw * 0.09);
+    ctx.fillStyle = '#fbfbf8'; ctx.fill();
+    ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.stroke();
+    ctx.fillStyle = suit.color === 'red' ? '#c8102e' : '#161616';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.font = `800 ${Math.round(cw * 0.28)}px system-ui, sans-serif`;
+    ctx.fillText(rank, x + cw * 0.08, y + cw * 0.06);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = `${Math.round(cw * 0.62)}px system-ui, sans-serif`;
+    ctx.fillText(suit.sym, x + cw / 2, y + ch * 0.58);
+  }
+  function wonSuits(){
+    const list = (state && state.completed.length) ? state.completed.map(c => ({sym: c.suit, color: c.color})) : ALL_SUITS;
+    return list;
+  }
+
+  // Card size for the celebrations, scaled to the screen.
+  function animCardSize(w, h, mul = 1){
+    const cw = Math.max(26, Math.min(64, Math.min(w * 0.055, h * 0.075))) * mul;
+    return { cw, ch: cw * 1.4 };
+  }
+  // Every card of the completed runs (K down to A for each finished set).
+  function wonDeck(){
+    const out = [];
+    for(const s of wonSuits()) for(let r=13; r>=1; r--) out.push({ rank: RANKS[r - 1], suit: s });
+    return out;
+  }
+  function randCard(){ return { rank: pick(RANKS), suit: pick(wonSuits()) }; }
+  // Card back in the player's current card-back colors.
+  function drawMiniBack(ctx, x, y, cw, ch){
+    const th = CARD_BACK_THEMES[cardBackTheme] || CARD_BACK_THEMES.purple;
+    roundRectPath(ctx, x, y, cw, ch, cw * 0.09);
+    ctx.fillStyle = th.c2; ctx.fill();
+    ctx.save(); ctx.clip();
+    ctx.strokeStyle = th.c1; ctx.lineWidth = cw * 0.08;
+    ctx.beginPath();
+    for(let d = -ch; d < cw + ch; d += cw * 0.17){ ctx.moveTo(x + d, y); ctx.lineTo(x + d - ch, y + ch); }
+    ctx.stroke(); ctx.restore();
+    roundRectPath(ctx, x, y, cw, ch, cw * 0.09);
+    ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.stroke();
+  }
+  // Draws a card centred at (x, y). `flip` (-1..1) squashes it sideways like a card turning
+  // over, showing the back while negative.
+  function drawCard(ctx, c, x, y, cw, ch, rot = 0, flip = 1, alpha = 1){
+    if(alpha <= 0) return;
+    ctx.save();
+    ctx.globalAlpha *= Math.min(1, alpha);
+    ctx.translate(x, y); ctx.rotate(rot); ctx.scale(Math.max(0.04, Math.abs(flip)), 1);
+    if(flip >= 0) drawMiniCard(ctx, -cw / 2, -ch / 2, cw, ch, c.rank, c.suit);
+    else drawMiniBack(ctx, -cw / 2, -ch / 2, cw, ch);
+    ctx.restore();
+  }
+  const clamp01 = v => Math.max(0, Math.min(1, v));
+  const easeOut = v => 1 - Math.pow(1 - clamp01(v), 3);
+  // A card that falls/tumbles: shared physics for many of the celebrations.
+  function tumble(c, dt, g){
+    c.vy += g * dt; c.x += c.vx * dt; c.y += c.vy * dt; c.rot += c.vr * dt; if(c.fs) c.fp += c.fs * dt;
+  }
+  // Fade multiplier for the last stretch of an animation.
+  const fadeOutAt = (t, from, len = 1500) => t > from ? clamp01(1 - (t - from) / len) : 1;
+
+  const WIN_ANIMS = {
+    // Paper confetti with playing cards fluttering and flipping down through it.
+    confetti: {
+      init(w, h){
+        const colors = ['#ffcf5c','#6fd6a0','#ff6b6b','#5cc8ff','#c48bff','#ffffff'];
+        const pieces = [];
+        for(let i=0;i<140;i++) pieces.push({ x: rnd(0,w), y: rnd(-h, -10), vx: rnd(-1,1), vy: rnd(2,5),
+          rot: rnd(0,6.28), vr: rnd(-0.15,0.15), pw: rnd(6,11), ph: rnd(10,16), color: pick(colors) });
+        const { cw, ch } = animCardSize(w, h);
+        const cards = [];
+        for(let i=0;i<16;i++) cards.push({ card: randCard(), x: rnd(0, w), y: rnd(-h * 1.2, -ch), vy: rnd(1.4, 2.4), sway: rnd(0, 6.28), rot: rnd(-0.4, 0.4), vr: rnd(-0.02, 0.02), fp: rnd(0, 6.28), fs: rnd(0.04, 0.08) });
+        return { pieces, cards, cw, ch };
+      },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        let alive = false;
+        for(const p of st.pieces){
+          p.x += (p.vx + Math.sin(t/400 + p.rot) * 0.6) * dt;
+          p.y += p.vy * dt; p.rot += p.vr * dt;
+          if(p.y > h + 20 && t < 4500){ p.y = -20; p.x = rnd(0,w); }
+          if(p.y <= h + 20) alive = true;
+          ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.scale(1, Math.cos(p.rot * 2));
+          ctx.fillStyle = p.color; ctx.fillRect(-p.pw/2, -p.ph/2, p.pw, p.ph); ctx.restore();
+        }
+        for(const c of st.cards){
+          c.y += c.vy * dt; c.x += Math.sin(t / 700 + c.sway) * 0.8 * dt; c.rot += c.vr * dt; c.fp += c.fs * dt;
+          if(c.y > h + st.ch && t < 4500){ c.y = -st.ch; c.x = rnd(0, w); }
+          if(c.y < h + st.ch) alive = true;
+          drawCard(ctx, c.card, c.x, c.y, st.cw, st.ch, c.rot, Math.cos(c.fp));
+        }
+        return (alive || t < 4500) && t < 9500;
+      }
+    },
+
+    // Rockets burst into sparks and a spray of cards that spin away and fade.
+    fireworks: {
+      init(w, h){ const { cw, ch } = animCardSize(w, h, 0.85); return { rockets: [], sparks: [], cards: [], next: 0, cw, ch }; },
+      step(st, ctx, w, h, t, dt){
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.fillStyle = 'rgba(0,0,0,0.22)'; ctx.fillRect(0,0,w,h);
+        ctx.globalCompositeOperation = 'lighter';
+        if(t < 5500 && t >= st.next){
+          st.rockets.push({ x: rnd(w*0.15, w*0.85), y: h, vy: -Math.sqrt(2*0.12*h*rnd(0.5,0.78)), hue: rnd(0,360) });
+          st.next = t + rnd(380, 750);
+        }
+        for(const r of st.rockets){
+          r.y += r.vy * dt; r.vy += 0.12 * dt;
+          ctx.fillStyle = `hsl(${r.hue},100%,80%)`;
+          ctx.beginPath(); ctx.arc(r.x, r.y, 2.5, 0, 6.283); ctx.fill();
+          if(r.vy >= -0.8){
+            r.dead = true;
+            for(let i=0;i<60;i++){
+              const a = rnd(0, 6.283), sp = rnd(1, 5.5);
+              st.sparks.push({ x: r.x, y: r.y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, life: 1, hue: r.hue + rnd(-25,25), decay: rnd(0.009, 0.016) });
+            }
+            for(let i=0;i<6;i++){
+              const a = i / 6 * 6.283 + rnd(-0.3, 0.3), sp = rnd(2, 3.5);
+              st.cards.push({ card: randCard(), x: r.x, y: r.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, rot: rnd(0, 6.28), vr: rnd(-0.1, 0.1), life: 1 });
+            }
+          }
+        }
+        st.rockets = st.rockets.filter(r => !r.dead);
+        for(const p of st.sparks){
+          p.vx *= 0.985; p.vy = p.vy * 0.985 + 0.045 * dt;
+          p.x += p.vx * dt; p.y += p.vy * dt; p.life -= p.decay * dt;
+          ctx.fillStyle = `hsla(${p.hue},100%,62%,${Math.max(0,p.life)})`;
+          ctx.beginPath(); ctx.arc(p.x, p.y, 2.2, 0, 6.283); ctx.fill();
+        }
+        st.sparks = st.sparks.filter(p => p.life > 0);
+        ctx.globalCompositeOperation = 'source-over';
+        for(const c of st.cards){
+          c.vx *= 0.99; c.vy = c.vy * 0.99 + 0.04 * dt; c.x += c.vx * dt; c.y += c.vy * dt; c.rot += c.vr * dt; c.life -= 0.009 * dt;
+          drawCard(ctx, c.card, c.x, c.y, st.cw, st.ch, c.rot, 1, c.life);
+        }
+        st.cards = st.cards.filter(c => c.life > 0);
+        return t < 5500 || st.rockets.length > 0 || st.sparks.length > 0 || st.cards.length > 0;
+      }
+    },
+
+    // Cards from the completed suits bounce out across the table, leaving a trail behind them.
+    cascade: {
+      init(w, h){
+        const cw = Math.max(40, Math.min(96, w * 0.075));
+        return { cw, ch: cw * 1.4, cards: [], launched: 0, total: 26, next: 0, suits: wonSuits() };
+      },
+      step(st, ctx, w, h, t, dt){
+        if(st.launched < st.total && t >= st.next){
+          const i = st.launched++;
+          st.cards.push({ x: rnd(w*0.08, w*0.92 - st.cw), y: h * 0.06, vx: (Math.random() < 0.5 ? -1 : 1) * rnd(3, 7),
+            vy: -rnd(0, 6), rank: RANKS[12 - (i % 13)], suit: st.suits[i % st.suits.length] });
+          st.next = t + 240;
+        }
+        for(const c of st.cards){
+          c.vy += 0.55 * dt; c.x += c.vx * dt; c.y += c.vy * dt;
+          if(c.y + st.ch > h){ c.y = h - st.ch; c.vy *= -0.8; }
+          drawMiniCard(ctx, c.x, c.y, st.cw, st.ch, c.rank, c.suit);
+        }
+        st.cards = st.cards.filter(c => c.x > -st.cw && c.x < w);
+        return st.launched < st.total || st.cards.length > 0;
+      }
+    },
+
+    // On theme: spiders drop in on silk threads, each carrying a card, then haul them back up.
+    spiders: {
+      init(w, h){
+        const n = Math.max(6, Math.floor(w / 140));
+        const list = [];
+        for(let i=0;i<n;i++) list.push({ x: (i + 0.5) * w / n + rnd(-w/n*0.2, w/n*0.2), target: rnd(h*0.15, h*0.65),
+          delay: rnd(0, 1300), size: rnd(28, 46), phase: rnd(0, 6.28), card: randCard() });
+        return { list };
+      },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        let alive = t < 2000;
+        for(const sp of st.list){
+          const lt = t - sp.delay;
+          if(lt < 0){ alive = true; continue; }
+          let y = sp.target * (1 - Math.exp(-lt/380) * Math.cos(lt/190));
+          if(t > 5200) y -= (t - 5200) * 0.75;
+          const cw = sp.size * 1.15, ch = cw * 1.4;
+          if(y > -(sp.size + ch)) alive = true; else continue;
+          const x = sp.x + Math.sin(t/520 + sp.phase) * 7;
+          ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(sp.x, 0); ctx.lineTo(x, y - sp.size*0.35); ctx.stroke();
+          drawCard(ctx, sp.card, x, y + sp.size * 0.2 + ch / 2, cw, ch, Math.sin(t / 600 + sp.phase) * 0.12);
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#000';
+          ctx.font = `${Math.round(sp.size)}px system-ui, sans-serif`;
+          ctx.fillText('🕷️', x, y);
+        }
+        return alive;
+      }
+    },
+
+    // Bunches of balloons float your cards up and away.
+    balloons: {
+      init(w, h){ const { cw, ch } = animCardSize(w, h); return { items: [], next: 0, cw, ch }; },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        if(t < 4500 && t >= st.next){
+          const n = Math.random() < 0.3 ? 2 : Math.random() < 0.15 ? 3 : 1;
+          const hues = []; for(let i=0;i<n;i++) hues.push(pick([0, 30, 50, 140, 200, 280, 330]));
+          st.items.push({ x: rnd(w * 0.05, w * 0.95), y: h + st.ch, vy: rnd(2.4, 3.6) * Math.max(1, h / 700), phase: rnd(0, 6.28), amp: rnd(10, 25), hues, card: randCard(), str: rnd(0.9, 1.4) });
+          st.next = t + 300;
+        }
+        const br = st.cw * 0.42;
+        for(const b of st.items){
+          b.y -= b.vy * dt;
+          const x = b.x + Math.sin(t / 650 + b.phase) * b.amp;
+          const top = b.y - st.ch / 2, by = top - st.ch * b.str;
+          b.hues.forEach((hue, i)=>{
+            const bx = x + (i - (b.hues.length - 1) / 2) * br * 1.5, byy = by - (i % 2) * br * 0.5;
+            ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(bx, byy + br * 1.15); ctx.stroke();
+            const g = ctx.createRadialGradient(bx - br * 0.35, byy - br * 0.4, br * 0.1, bx, byy, br * 1.2);
+            g.addColorStop(0, `hsl(${hue},90%,78%)`); g.addColorStop(1, `hsl(${hue},80%,45%)`);
+            ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(bx, byy, br, br * 1.18, 0, 0, 6.283); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(bx - 3, byy + br * 1.18 + 3); ctx.lineTo(bx + 3, byy + br * 1.18 + 3); ctx.lineTo(bx, byy + br * 1.1); ctx.fill();
+          });
+          drawCard(ctx, b.card, x, b.y, st.cw, st.ch, Math.sin(t / 500 + b.phase) * 0.1);
+        }
+        st.items = st.items.filter(b => b.y > -st.ch * 3);
+        return (t < 4500 || st.items.length > 0) && t < 9000;
+      }
+    },
+
+    // A swaying funnel that whirls the cards and debris around, then flings them away.
+    tornado: {
+      init(w, h){
+        const cw = Math.max(24, Math.min(46, w * 0.038));
+        const suits = wonSuits();
+        const parts = [];
+        for(let i=0;i<200;i++) parts.push({ y: Math.pow(Math.random(), 0.8), a: rnd(0, 6.283), sp: rnd(2.5, 4.5),
+          card: i < 22, rank: pick(RANKS), suit: pick(suits), s: rnd(1.5, 3.5) });
+        return { parts, cw, ch: cw * 1.4 };
+      },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        const grow = Math.min(1, t / 1200), fling = t > 5200 ? (t - 5200) / 1600 : 0;
+        const baseX = w * 0.5 + Math.sin(t / 1300) * w * 0.16;
+        const items = st.parts.map(p=>{
+          p.a += p.sp * dt * 0.03 * (1 + fling * 2);
+          const r = (h * 0.035 + p.y * h * 0.3) * grow * (1 + fling * 3);
+          const sway = Math.sin(t / 700 + p.y * 3) * w * 0.05 * p.y;
+          return { p, x: baseX + sway + Math.cos(p.a) * r, y: h * (1 - p.y * 0.92) - fling * h * 0.25 * p.y, z: Math.sin(p.a) };
+        });
+        items.sort((a, b) => a.z - b.z); // back of the funnel first
+        const fade = Math.max(0, 1 - fling);
+        for(const it of items){
+          const near = (it.z + 1) / 2, sc = 0.7 + 0.3 * near;
+          ctx.globalAlpha = (0.35 + 0.65 * near) * fade;
+          if(it.p.card){
+            ctx.save(); ctx.translate(it.x, it.y); ctx.rotate(it.p.a * 1.7);
+            drawMiniCard(ctx, -st.cw * sc / 2, -st.ch * sc / 2, st.cw * sc, st.ch * sc, it.p.rank, it.p.suit);
+            ctx.restore();
+          } else {
+            ctx.fillStyle = 'rgba(190,195,205,0.75)';
+            ctx.beginPath(); ctx.arc(it.x, it.y, it.p.s * sc, 0, 6.283); ctx.fill();
+          }
+        }
+        ctx.globalAlpha = 1;
+        return t < 6800;
+      }
+    },
+
+    // The volcano rises and erupts your cards, glowing, in high arcs, with smoke and lava flows.
+    volcano: {
+      init(w, h){ const { cw, ch } = animCardSize(w, h, 0.9); return { lava: [], smoke: [], cards: [], next: 800, cx: w * 0.5, halfW: Math.min(w * 0.34, 400), cw, ch }; },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        const rise = Math.min(1, t / 900), sink = t > 6200 ? Math.min(1, (t - 6200) / 1200) : 0;
+        const peakY = h - h * 0.36 * (rise - sink * 0.5);
+        const s = h / 800;
+        if(t > 800 && t < 5200){
+          st.lava.push({ x: st.cx + rnd(-12, 12), y: peakY, vx: rnd(-3.5, 3.5), vy: -rnd(7, 14) * s, life: 1, r: rnd(1.5, 3.5) });
+          if(Math.random() < 0.35) st.smoke.push({ x: st.cx + rnd(-20, 20), y: peakY, vy: -rnd(0.6, 1.4), r: rnd(14, 28), life: 1 });
+          if(t >= st.next){
+            st.cards.push({ card: randCard(), x: st.cx + rnd(-10, 10), y: peakY, vx: rnd(-4.5, 4.5), vy: -rnd(9, 15) * s, rot: rnd(0, 6.28), vr: rnd(-0.2, 0.2) });
+            st.next = t + rnd(110, 200);
+          }
+        }
+        for(const m of st.smoke){
+          m.y += m.vy * dt; m.x += Math.sin(t / 800 + m.r) * 0.3 * dt; m.r += 0.25 * dt; m.life -= 0.005 * dt;
+          ctx.fillStyle = `rgba(70,64,64,${Math.max(0, m.life) * 0.45})`;
+          ctx.beginPath(); ctx.arc(m.x, m.y, m.r, 0, 6.283); ctx.fill();
+        }
+        st.smoke = st.smoke.filter(m => m.life > 0);
+        ctx.fillStyle = '#2a1a14';
+        ctx.beginPath(); ctx.moveTo(st.cx - st.halfW, h + 2); ctx.lineTo(st.cx - 26, peakY); ctx.lineTo(st.cx + 26, peakY); ctx.lineTo(st.cx + st.halfW, h + 2); ctx.closePath(); ctx.fill();
+        if(t > 1300){
+          const L = Math.min(1, (t - 1300) / 2600);
+          ctx.strokeStyle = `rgba(255,110,20,${0.85 * (1 - sink)})`; ctx.lineWidth = 4; ctx.lineCap = 'round';
+          [[-1, 0.6], [1, 0.8]].forEach(([dir, len])=>{
+            ctx.beginPath();
+            for(let f=0; f<=len * L; f+=0.02){
+              const x = st.cx + dir * (26 + (st.halfW - 26) * f) - dir * 10 + Math.sin(f * 30) * 3;
+              const y = peakY + (h - peakY) * f + 4;
+              if(f === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+          });
+        }
+        const glow = ctx.createRadialGradient(st.cx, peakY, 2, st.cx, peakY, 70);
+        glow.addColorStop(0, `rgba(255,170,60,${0.9 * (1 - sink)})`); glow.addColorStop(1, 'rgba(255,80,0,0)');
+        ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(st.cx, peakY, 70, 0, 6.283); ctx.fill();
+        ctx.save(); ctx.shadowColor = 'rgba(255,120,30,0.95)'; ctx.shadowBlur = 16;
+        for(const c of st.cards){ tumble(c, dt, 0.25 * s); drawCard(ctx, c.card, c.x, c.y, st.cw, st.ch, c.rot); }
+        ctx.restore();
+        st.cards = st.cards.filter(c => c.y < h + st.ch);
+        ctx.globalCompositeOperation = 'lighter';
+        for(const q of st.lava){
+          q.vy += 0.25 * dt * s; q.x += q.vx * dt; q.y += q.vy * dt; q.life -= 0.006 * dt;
+          ctx.fillStyle = `hsla(${20 + 40 * q.life},100%,${45 + 20 * q.life}%,${Math.max(0, q.life)})`;
+          ctx.beginPath(); ctx.arc(q.x, q.y, q.r, 0, 6.283); ctx.fill();
+        }
+        ctx.globalCompositeOperation = 'source-over';
+        st.lava = st.lava.filter(q => q.life > 0 && q.y < h + 10);
+        return t < 7400;
+      }
+    },
+
+    // A blizzard freezes your cards into blocks of ice, which then shatter and drop away.
+    icestorm: {
+      init(w, h){
+        const flakes = [];
+        for(let i=0;i<200;i++) flakes.push({ x: rnd(-w * 0.3, w), y: rnd(-h, h), r: rnd(1, 3.5), sp: rnd(1.5, 4), sway: rnd(0, 6.28), big: i % 14 === 0 });
+        const { cw, ch } = animCardSize(w, h, 1.2);
+        const cards = [], n = 7;
+        for(let i=0;i<n;i++) cards.push({ card: randCard(), x: (i + 0.5) * w / n + rnd(-w / n * 0.15, w / n * 0.15), y: rnd(h * 0.25, h * 0.65),
+          rot: rnd(-0.3, 0.3), vx: 0, vy: 0, vr: 0, shatterAt: 4200 + i * 140 + rnd(0, 200), shattered: false });
+        return { flakes, shards: [], cards, ice: [], cw, ch };
+      },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        const active = t < 6000;
+        const gust = 2 + 3 * Math.max(0, Math.sin(t / 900));
+        const freeze = clamp01((t - 700) / 2600);
+        for(const c of st.cards){
+          if(!c.shattered && t >= c.shatterAt){
+            c.shattered = true; c.vx = rnd(-1, 1); c.vy = rnd(-2, 0); c.vr = rnd(-0.08, 0.08);
+            for(let i=0;i<9;i++){
+              const a = rnd(0, 6.283), sp = rnd(2, 6), r = st.cw * rnd(0.25, 0.5);
+              st.ice.push({ x: c.x, y: c.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 2, rot: rnd(0, 6.28), vr: rnd(-0.2, 0.2), life: 1,
+                pts: [[0, -r], [r * rnd(0.4, 0.9), r * rnd(0.2, 0.8)], [-r * rnd(0.4, 0.9), r * rnd(0.2, 0.8)]] });
+            }
+          }
+          if(c.shattered) tumble(c, dt, 0.3);
+          else { c.y += Math.sin(t / 900 + c.x) * 0.05 * dt; }
+          drawCard(ctx, c.card, c.x, c.y, st.cw, st.ch, c.rot);
+          if(!c.shattered && freeze > 0){
+            const pad = st.cw * 0.14 * freeze;
+            ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(c.rot);
+            roundRectPath(ctx, -st.cw / 2 - pad, -st.ch / 2 - pad, st.cw + pad * 2, st.ch + pad * 2, st.cw * 0.12);
+            ctx.fillStyle = `rgba(200,235,255,${0.42 * freeze})`; ctx.fill();
+            ctx.strokeStyle = `rgba(255,255,255,${0.8 * freeze})`; ctx.lineWidth = 1.5; ctx.stroke();
+            ctx.strokeStyle = `rgba(255,255,255,${0.7 * freeze})`; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(-st.cw * 0.35, -st.ch * 0.4); ctx.lineTo(-st.cw * 0.1, -st.ch * 0.15); ctx.stroke();
+            ctx.restore();
+          }
+        }
+        st.cards = st.cards.filter(c => c.y < h + st.ch * 1.5);
+        for(const q of st.ice){
+          tumble(q, dt, 0.3); q.life -= 0.012 * dt;
+          ctx.save(); ctx.translate(q.x, q.y); ctx.rotate(q.rot); ctx.globalAlpha = Math.max(0, q.life);
+          ctx.beginPath(); ctx.moveTo(q.pts[0][0], q.pts[0][1]); ctx.lineTo(q.pts[1][0], q.pts[1][1]); ctx.lineTo(q.pts[2][0], q.pts[2][1]); ctx.closePath();
+          ctx.fillStyle = 'rgba(205,238,255,0.75)'; ctx.fill(); ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 1; ctx.stroke();
+          ctx.restore();
+        }
+        st.ice = st.ice.filter(q => q.life > 0);
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        for(const f of st.flakes){
+          f.x += (gust + Math.sin(t / 500 + f.sway)) * dt * f.r * 0.5;
+          f.y += f.sp * dt;
+          if((f.y > h + 20 || f.x > w + 20) && active){ f.y = rnd(-40, -10); f.x = rnd(-w * 0.4, w); }
+          ctx.globalAlpha = 0.5 + f.r / 7;
+          ctx.fillStyle = '#fff';
+          if(f.big){ ctx.font = `${Math.round(f.r * 7)}px system-ui, sans-serif`; ctx.fillText('❄', f.x, f.y); }
+          else { ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, 6.283); ctx.fill(); }
+        }
+        ctx.globalAlpha = 1;
+        const frost = Math.min(1, t / 4000) * (t > 6000 ? Math.max(0, 1 - (t - 6000) / 1500) : 1);
+        const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.25, w / 2, h / 2, Math.hypot(w, h) / 2);
+        g.addColorStop(0, 'rgba(200,235,255,0)'); g.addColorStop(1, `rgba(215,240,255,${0.5 * frost})`);
+        ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+        return t < 7500;
+      }
+    },
+
+    // Water rises with rolling waves; cards float and bob on the surface, then it all drains away.
+    flood: {
+      init(w, h){
+        const cw = Math.max(28, Math.min(58, w * 0.05));
+        const suits = wonSuits();
+        const cards = [];
+        for(let i=0;i<9;i++) cards.push({ x: rnd(0, w), rank: pick(RANKS), suit: pick(suits), ph: rnd(0, 6.28), vx: rnd(-0.7, 0.7) });
+        return { cards, cw, ch: cw * 1.4, bubbles: [] };
+      },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        const k = t < 3000 ? t / 3000 : t < 6000 ? 1 : Math.max(0, 1 - (t - 6000) / 2000);
+        const level = h - k * k * (3 - 2 * k) * h * 0.55;
+        const surf = (x, amp, len, sp, off) => level + Math.sin(x / len + t / sp + off) * amp;
+        const wave = (amp, len, sp, off, fill)=>{
+          ctx.beginPath(); ctx.moveTo(0, h);
+          for(let x=0; x<=w + 12; x+=12) ctx.lineTo(x, surf(x, amp, len, sp, off));
+          ctx.lineTo(w, h); ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
+        };
+        wave(10, 90, 700, 1.3, 'rgba(30,90,160,0.55)');
+        for(const c of st.cards){
+          c.x += c.vx * dt; if(c.x < -st.cw) c.x = w; if(c.x > w + st.cw) c.x = -st.cw;
+          const y = surf(c.x, 14, 110, 600, 0);
+          if(y > h - st.ch * 0.2) continue;
+          const slope = Math.cos(c.x / 110 + t / 600) * 14 / 110;
+          ctx.save(); ctx.translate(c.x, y - st.ch * 0.25); ctx.rotate(Math.atan(slope) + Math.sin(t / 500 + c.ph) * 0.15);
+          drawMiniCard(ctx, -st.cw / 2, -st.ch / 2, st.cw, st.ch, c.rank, c.suit);
+          ctx.restore();
+        }
+        wave(14, 110, 600, 0, 'rgba(40,130,200,0.5)');
+        if(k > 0.2 && Math.random() < 0.3) st.bubbles.push({ x: rnd(0, w), y: h + 10, r: rnd(2, 6), vy: rnd(1, 2.5) });
+        ctx.strokeStyle = 'rgba(220,240,255,0.7)'; ctx.lineWidth = 1;
+        for(const b of st.bubbles){
+          b.y -= b.vy * dt; b.x += Math.sin(t / 300 + b.r) * 0.3;
+          ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, 6.283); ctx.stroke();
+        }
+        st.bubbles = st.bubbles.filter(b => b.y > level + 4);
+        return t < 8000;
+      }
+    },
+
+    // Northern lights, with a ribbon of cards gliding along the brightest curtain.
+    aurora: {
+      init(w, h){
+        const stars = [];
+        for(let i=0;i<90;i++) stars.push({ x: rnd(0, w), y: rnd(0, h * 0.75), r: rnd(0.5, 1.6), ph: rnd(0, 6.28) });
+        const { cw, ch } = animCardSize(w, h);
+        const cards = []; for(let i=0;i<9;i++) cards.push(randCard());
+        return { stars, cards, cw, ch };
+      },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        const a = t < 1500 ? t / 1500 : t > 6500 ? Math.max(0, 1 - (t - 6500) / 1500) : 1;
+        for(const s of st.stars){
+          ctx.fillStyle = `rgba(255,255,255,${a * (0.35 + 0.65 * Math.abs(Math.sin(t / 600 + s.ph)))})`;
+          ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 6.283); ctx.fill();
+        }
+        ctx.globalCompositeOperation = 'lighter';
+        const bands = [ { hue: 140, y: 0.30, amp: 0.06, sp: 2200 }, { hue: 172, y: 0.38, amp: 0.05, sp: 2900 }, { hue: 285, y: 0.22, amp: 0.04, sp: 3500 } ];
+        const bandY = (b, x) => h * (b.y + b.amp * Math.sin(x / (w * 0.18) + t / b.sp) + 0.02 * Math.sin(x / (w * 0.05) - t / 900));
+        for(const b of bands){
+          for(let x=0; x<w; x+=9){
+            const base = bandY(b, x);
+            const hgt = h * (0.16 + 0.07 * Math.sin(x / (w * 0.11) + t / 1700));
+            const flick = 0.6 + 0.4 * Math.sin(x / 23 + t / 400);
+            for(let j=0;j<4;j++){
+              ctx.fillStyle = `hsla(${b.hue + j * 6},95%,58%,${a * flick * (0.28 - j * 0.06)})`;
+              ctx.fillRect(x, base - hgt * (j + 1) / 4, 9, hgt / 4 + 1);
+            }
+          }
+        }
+        ctx.globalCompositeOperation = 'source-over';
+        const span = w + st.cw * 2, gap = span / st.cards.length;
+        st.cards.forEach((c, i)=>{
+          const x = ((t * w / 7000 + i * gap) % span) - st.cw;
+          const y = bandY(bands[0], x) + st.ch * 0.2;
+          const slope = (bandY(bands[0], x + 5) - bandY(bands[0], x - 5)) / 10;
+          drawCard(ctx, c, x, y, st.cw, st.ch, Math.atan(slope), Math.cos(t / 900 + i), a);
+        });
+        return t < 8000;
+      }
+    },
+
+    // Cards streak in as meteors with fiery tails; the big ones burst into sparks.
+    meteors: {
+      init(w, h){ const { cw, ch } = animCardSize(w, h, 0.85); return { m: [], sparks: [], next: 0, cw, ch }; },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        if(t < 5500 && t >= st.next){
+          const big = Math.random() < 0.2, sp = rnd(0.9, 1.3) * Math.max(6, w / 130);
+          st.m.push({ card: randCard(), x: rnd(w * 0.25, w * 1.15), y: rnd(-st.ch, h * 0.3), vx: -sp, vy: sp * 0.6, big, burstY: rnd(h * 0.45, h * 0.8), tail: rnd(0.15, 0.25) * Math.max(w, 400), spin: rnd(-0.05, 0.05), rot: 0 });
+          st.next = t + rnd(200, 400);
+        }
+        for(const m of st.m){
+          m.x += m.vx * dt; m.y += m.vy * dt; m.rot += m.spin * dt;
+          const len = Math.hypot(m.vx, m.vy), tx = m.x - m.vx / len * m.tail, ty = m.y - m.vy / len * m.tail;
+          ctx.globalCompositeOperation = 'lighter';
+          const tg = ctx.createLinearGradient(m.x, m.y, tx, ty);
+          tg.addColorStop(0, 'rgba(255,190,90,0.85)'); tg.addColorStop(0.4, 'rgba(255,120,40,0.35)'); tg.addColorStop(1, 'rgba(255,80,20,0)');
+          ctx.strokeStyle = tg; ctx.lineWidth = st.cw * 0.7; ctx.lineCap = 'round';
+          ctx.beginPath(); ctx.moveTo(m.x, m.y); ctx.lineTo(tx, ty); ctx.stroke();
+          ctx.globalCompositeOperation = 'source-over';
+          drawCard(ctx, m.card, m.x, m.y, st.cw, st.ch, Math.atan2(m.vy, m.vx) + Math.PI / 2 + m.rot);
+          if(m.big && m.y > m.burstY){
+            m.dead = true;
+            for(let i=0;i<40;i++){ const an = rnd(0, 6.283), sp = rnd(1, 4.5); st.sparks.push({ x: m.x, y: m.y, vx: Math.cos(an) * sp, vy: Math.sin(an) * sp, life: 1 }); }
+          }
+          if(m.x < -m.tail || m.y > h + m.tail) m.dead = true;
+        }
+        st.m = st.m.filter(m => !m.dead);
+        ctx.globalCompositeOperation = 'lighter';
+        for(const p of st.sparks){
+          p.vy += 0.04 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= 0.015 * dt;
+          ctx.fillStyle = `hsla(40,100%,65%,${Math.max(0, p.life)})`;
+          ctx.beginPath(); ctx.arc(p.x, p.y, 2, 0, 6.283); ctx.fill();
+        }
+        ctx.globalCompositeOperation = 'source-over';
+        st.sparks = st.sparks.filter(p => p.life > 0);
+        return t < 5500 || st.m.length > 0 || st.sparks.length > 0;
+      }
+    },
+
+    // Autumn leaves, with cards rocking down among them the way a leaf falls.
+    leaves: {
+      init(w, h){
+        const L = [];
+        for(let i=0;i<45;i++) L.push({ x: rnd(0, w), y: rnd(-h, -20), vy: rnd(1, 2.2), sway: rnd(0, 6.28), amp: rnd(1, 2.5),
+          rot: rnd(0, 6.28), vr: rnd(-0.06, 0.06), s: rnd(20, 38), g: pick(['🍂','🍁','🍁','🍂']) });
+        const { cw, ch } = animCardSize(w, h);
+        const cards = [];
+        for(let i=0;i<12;i++) cards.push({ card: randCard(), x0: rnd(0, w), y: rnd(-h, -ch), vy: rnd(1.1, 1.7), ph: rnd(0, 6.28), amp: rnd(30, 70) });
+        return { L, cards, cw, ch };
+      },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        let alive = false;
+        const fade = fadeOutAt(t, 6500);
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#000';
+        ctx.globalAlpha = fade;
+        for(const l of st.L){
+          l.y += l.vy * dt; l.x += Math.sin(t / 700 + l.sway) * l.amp * dt; l.rot += l.vr * dt;
+          if(l.y > h + 40 && t < 5000){ l.y = rnd(-80, -20); l.x = rnd(0, w); }
+          if(l.y < h + 40) alive = true;
+          ctx.save(); ctx.translate(l.x, l.y); ctx.rotate(l.rot);
+          ctx.font = `${Math.round(l.s)}px system-ui, sans-serif`; ctx.fillText(l.g, 0, 0);
+          ctx.restore();
+        }
+        ctx.globalAlpha = 1;
+        for(const c of st.cards){
+          c.ph += 0.035 * dt; c.y += c.vy * dt * (0.6 + 0.4 * Math.abs(Math.cos(c.ph)));
+          if(c.y > h + st.ch && t < 5000){ c.y = -st.ch; c.x0 = rnd(0, w); }
+          if(c.y < h + st.ch) alive = true;
+          drawCard(ctx, c.card, c.x0 + Math.sin(c.ph) * c.amp, c.y, st.cw, st.ch, Math.cos(c.ph) * 0.5, 1, fade);
+        }
+        return (alive || t < 5000) && t < 8000;
+      }
+    },
+
+    // Blossom petals and cards drifting together on a breeze, the cards slowly turning over.
+    blossoms: {
+      init(w, h){
+        const P = [];
+        for(let i=0;i<100;i++) P.push({ x: rnd(-w * 0.5, w), y: rnd(-h, h * 0.3), vx: rnd(1, 2.5), vy: rnd(0.6, 1.5), rot: rnd(0, 6.28), vr: rnd(-0.08, 0.08), s: rnd(5, 10), hue: rnd(330, 355), light: rnd(78, 90) });
+        const { cw, ch } = animCardSize(w, h);
+        const cards = [];
+        for(let i=0;i<10;i++) cards.push({ card: randCard(), x: rnd(-w * 0.6, w * 0.3), y: rnd(-h * 0.2, h * 0.6), vx: rnd(1.2, 2.2), vy: rnd(0.4, 0.9), rot: rnd(-0.5, 0.5), vr: rnd(-0.015, 0.015), fp: rnd(0, 6.28), fs: rnd(0.03, 0.06) });
+        return { P, cards, cw, ch };
+      },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        let alive = false;
+        const breeze = 1 + 0.6 * Math.sin(t / 1200);
+        const fade = fadeOutAt(t, 6500);
+        for(const p of st.P){
+          p.x += p.vx * breeze * dt; p.y += (p.vy + Math.sin(t / 600 + p.rot) * 0.4) * dt; p.rot += p.vr * dt;
+          if((p.x > w + 20 || p.y > h + 20) && t < 5500){ p.x = rnd(-w * 0.4, -10); p.y = rnd(-h * 0.2, h * 0.7); }
+          if(p.x < w + 20 && p.y < h + 20) alive = true;
+          ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.scale(1, 0.55 + 0.45 * Math.cos(p.rot * 2));
+          ctx.fillStyle = `hsla(${p.hue},80%,${p.light}%,${0.9 * fade})`;
+          ctx.beginPath(); ctx.ellipse(0, 0, p.s, p.s * 0.6, 0, 0, 6.283); ctx.fill();
+          ctx.restore();
+        }
+        for(const c of st.cards){
+          c.x += c.vx * breeze * dt; c.y += (c.vy + Math.sin(t / 700 + c.fp) * 0.3) * dt; c.rot += c.vr * dt; c.fp += c.fs * dt;
+          if((c.x > w + st.cw || c.y > h + st.ch) && t < 5500){ c.x = rnd(-w * 0.3, -st.cw); c.y = rnd(-h * 0.1, h * 0.6); }
+          if(c.x < w + st.cw && c.y < h + st.ch) alive = true;
+          drawCard(ctx, c.card, c.x, c.y, st.cw, st.ch, c.rot, Math.cos(c.fp), fade);
+        }
+        return (alive || t < 5500) && t < 8000;
+      }
+    },
+
+    // Soap bubbles carry cards upward; when a bubble pops, its card tumbles back down.
+    bubbles: {
+      init(){ return { b: [], rings: [], falling: [], next: 0 }; },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        const fade = fadeOutAt(t, 6500);
+        if(t < 4800 && t >= st.next){
+          const r = rnd(28, 46);
+          st.b.push({ x: rnd(r, w - r), y: h + r, r, vy: rnd(1, 2), ph: rnd(0, 6.28), popAt: rnd(h * 0.08, h * 0.55), card: randCard() });
+          st.next = t + 230;
+        }
+        ctx.globalAlpha = fade;
+        for(const c of st.falling){ tumble(c, dt, 0.25); drawCard(ctx, c.card, c.x, c.y, c.cw, c.ch, c.rot, Math.cos(c.fp)); }
+        st.falling = st.falling.filter(c => c.y < h + c.ch);
+        for(const b of st.b){
+          b.y -= b.vy * dt; b.x += Math.sin(t / 600 + b.ph) * 0.6 * dt;
+          const ch = b.r * 1.25, cw = ch / 1.4;
+          if(b.y < b.popAt){
+            b.dead = true; st.rings.push({ x: b.x, y: b.y, r: b.r, life: 1 });
+            st.falling.push({ card: b.card, x: b.x, y: b.y, vx: rnd(-1.5, 1.5), vy: -rnd(0, 2), rot: Math.sin(t / 700 + b.ph) * 0.3, vr: rnd(-0.12, 0.12), fp: 0, fs: rnd(0.05, 0.1), cw, ch });
+            continue;
+          }
+          drawCard(ctx, b.card, b.x, b.y, cw, ch, Math.sin(t / 700 + b.ph) * 0.3);
+          const g = ctx.createRadialGradient(b.x, b.y, b.r * 0.3, b.x, b.y, b.r);
+          g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(1, 'rgba(255,255,255,0.22)');
+          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, 6.283); ctx.fill();
+          ctx.strokeStyle = `hsla(${(t / 8 + b.ph * 60) % 360},80%,75%,0.7)`; ctx.lineWidth = 1.5; ctx.stroke();
+          ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(b.x, b.y, b.r * 0.75, 3.6, 4.4); ctx.stroke();
+        }
+        st.b = st.b.filter(b => !b.dead);
+        for(const r of st.rings){
+          r.life -= 0.06 * dt;
+          ctx.strokeStyle = `rgba(255,255,255,${Math.max(0, r.life) * 0.7})`; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.arc(r.x, r.y, r.r * (1 + (1 - r.life) * 0.6), 0, 6.283); ctx.stroke();
+        }
+        st.rings = st.rings.filter(r => r.life > 0);
+        ctx.globalAlpha = 1;
+        return (t < 4800 || st.b.length > 0 || st.falling.length > 0) && t < 8000;
+      }
+    },
+
+    // A rainstorm: the first lightning bolt strikes a pile of cards and blasts it across the sky.
+    lightning: {
+      init(w, h){
+        const rain = [];
+        for(let i=0;i<200;i++) rain.push({ x: rnd(0, w * 1.2), y: rnd(-h, h), sp: rnd(14, 22), len: rnd(10, 22) });
+        const { cw, ch } = animCardSize(w, h, 1.1);
+        const px = w / 2, py = h * 0.8;
+        const pile = [];
+        for(let i=0;i<26;i++) pile.push({ card: randCard(), x: px + rnd(-cw * 0.5, cw * 0.5), y: py - i * 1.2 + rnd(-3, 3), rot: rnd(-0.35, 0.35), vx: 0, vy: 0, vr: 0 });
+        return { rain, bolts: [], flash: 0, times: [700, 2500, 4000], idx: 0, pile, blasted: false, px, py, cw, ch, sparks: [] };
+      },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        const dim = t < 600 ? t / 600 : t > 5500 ? Math.max(0, 1 - (t - 5500) / 1000) : 1;
+        ctx.fillStyle = `rgba(5,8,20,${0.35 * dim})`; ctx.fillRect(0, 0, w, h);
+        if(st.idx < st.times.length && t >= st.times[st.idx]){
+          const first = st.idx === 0;
+          st.idx++;
+          const pts = []; let x = first ? st.px + rnd(-w * 0.15, w * 0.15) : rnd(w * 0.2, w * 0.8), y = 0;
+          const endX = first ? st.px : null, end = first ? st.py - st.ch * 0.4 : rnd(h * 0.5, h * 0.85);
+          while(y < end){
+            pts.push([x, y]);
+            y += rnd(20, 45);
+            x += rnd(-30, 30);
+            if(endX !== null) x += (endX - x) * clamp01(y / end) * 0.5;
+          }
+          pts.push([endX !== null ? endX : x, end]);
+          st.bolts.push({ pts, life: 1 });
+          st.flash = 0.3;
+          if(first){
+            st.blasted = true;
+            for(const c of st.pile){ const a = rnd(-Math.PI * 0.95, -Math.PI * 0.05); const sp = rnd(5, 15) * h / 800; c.vx = Math.cos(a) * sp; c.vy = Math.sin(a) * sp; c.vr = rnd(-0.25, 0.25); }
+            for(let i=0;i<40;i++){ const a = rnd(0, 6.283), sp = rnd(2, 7); st.sparks.push({ x: st.px, y: st.py - st.ch * 0.4, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 1 }); }
+          }
+        }
+        if(st.flash > 0){ ctx.fillStyle = `rgba(215,225,255,${st.flash})`; ctx.fillRect(0, 0, w, h); st.flash -= 0.03 * dt; }
+        for(const c of st.pile){
+          if(st.blasted) tumble(c, dt, 0.3 * h / 800);
+          drawCard(ctx, c.card, c.x, c.y, st.cw, st.ch, c.rot, 1, st.blasted ? 1 : clamp01(t / 400));
+        }
+        ctx.globalCompositeOperation = 'lighter';
+        for(const p of st.sparks){
+          p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 0.1 * dt; p.life -= 0.03 * dt;
+          ctx.fillStyle = `rgba(200,220,255,${Math.max(0, p.life)})`; ctx.beginPath(); ctx.arc(p.x, p.y, 2, 0, 6.283); ctx.fill();
+        }
+        ctx.globalCompositeOperation = 'source-over';
+        st.sparks = st.sparks.filter(p => p.life > 0);
+        ctx.strokeStyle = `rgba(170,190,230,${0.45 * dim})`; ctx.lineWidth = 1;
+        ctx.beginPath();
+        for(const r of st.rain){
+          r.y += r.sp * dt; r.x -= r.sp * 0.25 * dt;
+          if(r.y > h && t < 5500){ r.y = rnd(-60, -10); r.x = rnd(0, w * 1.2); }
+          ctx.moveTo(r.x, r.y); ctx.lineTo(r.x + r.len * 0.25, r.y - r.len);
+        }
+        ctx.stroke();
+        for(const b of st.bolts){
+          ctx.save(); ctx.shadowColor = '#9fc3ff'; ctx.shadowBlur = 18;
+          ctx.strokeStyle = `rgba(255,255,255,${Math.max(0, b.life)})`; ctx.lineWidth = 3 * b.life + 0.5;
+          ctx.beginPath(); b.pts.forEach(([x, y], i)=> i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke();
+          ctx.restore();
+          b.life -= 0.045 * dt;
+        }
+        st.bolts = st.bolts.filter(b => b.life > 0);
+        return t < 6600;
+      }
+    },
+
+    // Cards drift through the dark, each with a few fireflies circling it.
+    fireflies: {
+      init(w, h){
+        const { cw, ch } = animCardSize(w, h, 1.1);
+        const cards = [];
+        for(let i=0;i<6;i++) cards.push({ card: randCard(), x: (i + 0.5) * w / 6 + rnd(-30, 30), y: rnd(h * 0.25, h * 0.75), vx: rnd(-0.3, 0.3), vy: rnd(-0.2, 0.2), rot: rnd(-0.3, 0.3), ph: rnd(0, 6.28) });
+        const f = [];
+        cards.forEach((c, ci)=>{ for(let k=0;k<4;k++) f.push({ ci, a: rnd(0, 6.28), sp: rnd(0.01, 0.025) * (Math.random() < 0.5 ? -1 : 1), r: rnd(0.7, 1.1), ph: rnd(0, 6.28) }); });
+        for(let i=0;i<20;i++) f.push({ ci: -1, x: rnd(0, w), y: rnd(0, h), vx: rnd(-0.5, 0.5), vy: rnd(-0.5, 0.5), ph: rnd(0, 6.28) });
+        return { cards, f, cw, ch };
+      },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        const a = t < 1200 ? t / 1200 : fadeOutAt(t, 6800, 1200);
+        for(const c of st.cards){
+          c.x += c.vx * dt; c.y += c.vy * dt + Math.sin(t / 1000 + c.ph) * 0.15 * dt;
+          drawCard(ctx, c.card, c.x, c.y, st.cw, st.ch, c.rot + Math.sin(t / 1500 + c.ph) * 0.1, 1, a * 0.95);
+        }
+        ctx.globalCompositeOperation = 'lighter';
+        for(const q of st.f){
+          let x, y;
+          if(q.ci >= 0){
+            const c = st.cards[q.ci]; q.a += q.sp * dt;
+            x = c.x + Math.cos(q.a) * st.cw * q.r; y = c.y + Math.sin(q.a) * st.ch * 0.6 * q.r;
+          } else {
+            q.vx = Math.max(-0.8, Math.min(0.8, q.vx + rnd(-0.06, 0.06) * dt)); q.vy = Math.max(-0.8, Math.min(0.8, q.vy + rnd(-0.06, 0.06) * dt));
+            q.x = (q.x + q.vx * dt + w) % w; q.y = Math.max(0, Math.min(h, q.y + q.vy * dt)); x = q.x; y = q.y;
+          }
+          const glow = a * (0.3 + 0.7 * Math.max(0, Math.sin(t / 450 + q.ph)));
+          const g = ctx.createRadialGradient(x, y, 0, x, y, 16);
+          g.addColorStop(0, `rgba(230,255,120,${glow})`); g.addColorStop(1, 'rgba(180,255,80,0)');
+          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, 16, 0, 6.283); ctx.fill();
+        }
+        ctx.globalCompositeOperation = 'source-over';
+        return t < 8000;
+      }
+    },
+
+    // A rainbow sweeps across, then your cards ride over it like a slide.
+    rainbow: {
+      init(w, h){ const { cw, ch } = animCardSize(w, h, 0.9); return { sparks: [], riders: [], next: 2000, cw, ch }; },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        const k = Math.min(1, t / 2000), fade = fadeOutAt(t, 6300, 1200);
+        const cx = w / 2, cy = h * 0.95, R = Math.min(w * 0.44, h * 0.72), band = R * 0.055;
+        const colors = ['#ff5e5e','#ffa94d','#ffe066','#69db7c','#4dabf7','#748ffc','#b197fc'];
+        ctx.lineWidth = band + 1;
+        colors.forEach((c, i)=>{
+          ctx.strokeStyle = c; ctx.globalAlpha = 0.55 * fade;
+          ctx.beginPath(); ctx.arc(cx, cy, R - i * band, Math.PI, Math.PI + Math.PI * k); ctx.stroke();
+        });
+        ctx.globalAlpha = 1;
+        if(t >= st.next && t < 5200){ st.riders.push({ card: randCard(), u: 0, off: false, vx: 0, vy: 0, x: 0, y: 0, rot: 0 }); st.next = t + 240; }
+        const top = R + st.ch * 0.5;
+        for(const r of st.riders){
+          if(!r.off){
+            r.u += (0.006 + 0.004 * Math.sin(Math.PI * r.u)) * dt;
+            const an = Math.PI + Math.PI * Math.min(1, r.u);
+            r.x = cx + Math.cos(an) * top; r.y = cy + Math.sin(an) * top; r.rot = an + Math.PI / 2;
+            if(r.u >= 1){ r.off = true; r.vx = 2; r.vy = 4; }
+          } else { r.vy += 0.3 * dt; r.x += r.vx * dt; r.y += r.vy * dt; }
+          drawCard(ctx, r.card, r.x, r.y, st.cw, st.ch, r.rot, 1, fade);
+        }
+        st.riders = st.riders.filter(r => r.y < h + st.ch);
+        if(k < 1 || Math.random() < 0.3){
+          const an = Math.PI + Math.PI * k, rr = R - rnd(0, band * 7);
+          st.sparks.push({ x: cx + Math.cos(an) * rr, y: cy + Math.sin(an) * rr, life: 1 });
+        }
+        for(const s of st.sparks){
+          s.life -= 0.03 * dt; s.y -= 0.3 * dt;
+          ctx.fillStyle = `rgba(255,255,255,${Math.max(0, s.life) * fade})`;
+          ctx.beginPath(); ctx.arc(s.x, s.y, 2 * s.life + 0.5, 0, 6.283); ctx.fill();
+        }
+        st.sparks = st.sparks.filter(s => s.life > 0);
+        return t < 7500;
+      }
+    },
+
+    // The 8 finished stacks leap out of their foundation slots, one after another, and scatter.
+    burst: {
+      init(w, h){
+        let rects = [...document.querySelectorAll('#foundations .foundSlot')].map(el => el.getBoundingClientRect()).filter(r => r.width > 0);
+        const d = animCardSize(w, h);
+        if(rects.length < 8) rects = Array.from({length: 8}, (_, i)=>({ left: w * (0.12 + i * 0.1) - d.cw / 2, top: h * 0.08, width: d.cw, height: d.ch }));
+        const cw = Math.min(rects[0].width, 110), ch = cw * 1.4;
+        const suits = state && state.completed.length ? state.completed.map(c => ({ sym: c.suit, color: c.color })) : null;
+        const piles = rects.slice(0, 8).map((r, i)=>({ x: r.left + r.width / 2, y: r.top + r.height / 2, suit: suits ? suits[i % suits.length] : pick(wonSuits()), at: 250 + i * 260, fired: false }));
+        return { piles, cards: [], cw, ch };
+      },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        const s = h / 800;
+        for(const p of st.piles){
+          if(!p.fired && t >= p.at){
+            p.fired = true;
+            for(let r=13; r>=1; r--) st.cards.push({ card: { rank: RANKS[r - 1], suit: p.suit }, x: p.x, y: p.y, vx: rnd(-6, 6), vy: -rnd(3, 12) * s, rot: 0, vr: rnd(-0.2, 0.2), fp: 0, fs: rnd(0, 0.05), bounces: 0 });
+          }
+          if(!p.fired) drawCard(ctx, { rank: 'K', suit: p.suit }, p.x, p.y, st.cw, st.ch, Math.sin(t / 60 + p.x) * 0.04 * clamp01((t - p.at + 400) / 400));
+        }
+        for(const c of st.cards){
+          tumble(c, dt, 0.35 * s);
+          if(c.y + st.ch / 2 > h && c.vy > 0 && c.bounces < 3){ c.y = h - st.ch / 2; c.vy *= -0.55; c.vx *= 0.9; c.bounces++; }
+          drawCard(ctx, c.card, c.x, c.y, st.cw, st.ch, c.rot, Math.cos(c.fp));
+        }
+        st.cards = st.cards.filter(c => c.y < h + st.ch && c.x > -st.cw && c.x < w + st.cw);
+        return t < 9000 && (st.piles.some(p => !p.fired) || st.cards.length > 0);
+      }
+    },
+
+    // Your finished King-to-Ace runs parade across the screen, hopping in step.
+    parade: {
+      init(w, h){
+        const { cw, ch } = animCardSize(w, h, 1.1);
+        const runs = wonSuits().map(s => { const r = []; for(let k=13;k>=1;k--) r.push({ rank: RANKS[k - 1], suit: s }); return r; });
+        const lanes = [0.3, 0.52, 0.74];
+        return { runs, lanes, cw, ch, gap: cw * 0.62, speed: w / 3000 };
+      },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        let alive = false;
+        st.runs.forEach((run, i)=>{
+          const start = i * 450;
+          const lt = t - start;
+          if(lt < 0){ alive = true; return; }
+          const headX = -st.cw + lt * st.speed;
+          if(headX - 13 * st.gap < w + st.cw) alive = true;
+          const y = h * st.lanes[i % st.lanes.length];
+          for(let j=run.length-1; j>=0; j--){
+            const x = headX - j * st.gap;
+            if(x < -st.cw || x > w + st.cw) continue;
+            const ph = t / 170 + j * 0.55;
+            drawCard(ctx, run[j], x, y - Math.abs(Math.sin(ph)) * st.ch * 0.14, st.cw, st.ch, Math.sin(ph) * 0.08);
+          }
+        });
+        return alive && t < 10000;
+      }
+    },
+
+    // A giant riffle shuffle, then the deck spreads face-up across the screen in a wave.
+    riffle: {
+      init(w, h){
+        const { cw, ch } = animCardSize(w, h, 1.2);
+        const deck = wonDeck(); const n = 40, cards = [];
+        for(let i=0;i<n;i++) cards.push(deck[Math.floor(Math.random() * deck.length)]);
+        return { cards, n, cw, ch, cx: w / 2, cy: h * 0.5 };
+      },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        const { n, cw, ch, cx, cy } = st;
+        const lx = cx - cw * 1.6, rx = cx + cw * 1.6;
+        const fade = fadeOutAt(t, 6000, 1200);
+        for(let k=0;k<n;k++){
+          const side = k % 2 ? 1 : -1, sideIdx = Math.floor(k / 2);
+          const launch = 300 + k * 50, p = clamp01((t - launch) / 260);
+          const fromX = side < 0 ? lx : rx, fromY = cy - (n / 2 - sideIdx) * 0.8;
+          let x, y, rot, flip;
+          if(t < 2700){
+            x = fromX + (cx - fromX) * p; y = fromY + (cy - k * 0.8 - fromY) * p - Math.sin(Math.PI * p) * ch * 0.35;
+            rot = side * 0.15 * (1 - p); flip = -1;
+          } else {
+            const q = easeOut((t - 2700 - k * 30) / 600);
+            const tx = cw * 0.7 + k * (w - cw * 1.4) / (n - 1);
+            const wave = t > 3800 ? Math.sin(t / 300 + k * 0.4) * ch * 0.25 : 0;
+            x = cx + (tx - cx) * q; y = (cy - k * 0.8) + wave * q;
+            rot = Math.sin(t / 300 + k * 0.4) * 0.1 * q; flip = -Math.cos(Math.PI * q);
+          }
+          drawCard(ctx, st.cards[k], x, y, cw, ch, rot, flip, fade);
+        }
+        return t < 7200;
+      }
+    },
+
+    // A house of cards builds itself level by level... then collapses.
+    house: {
+      init(w, h){
+        const L = 4, a = 0.3;
+        const ch = Math.min(w * 0.22, h * 0.19, 170), cw = ch / 1.4;
+        const pairW = ch * 0.95, dx = ch * 0.5 * Math.sin(a), lvlH = ch * Math.cos(a) + 3;
+        const cards = [];
+        for(let l=0; l<L; l++){
+          const pairs = L - l, y = h * 0.92 - ch * Math.cos(a) / 2 - l * lvlH;
+          const x0 = w / 2 - (pairs * pairW) / 2 + pairW / 2;
+          for(let p=0; p<pairs; p++){
+            const px = x0 + p * pairW;
+            cards.push({ tx: px - dx, ty: y, trot: a }, { tx: px + dx, ty: y, trot: -a });
+          }
+          for(let f=0; f<pairs - 1; f++) cards.push({ tx: x0 + (f + 0.5) * pairW, ty: y - ch * Math.cos(a) / 2 - 2, trot: Math.PI / 2 });
+        }
+        cards.forEach((c, i)=>{ c.card = randCard(); c.at = 200 + i * 150; c.x = c.tx; c.y = c.ty; c.rot = c.trot; c.vx = 0; c.vy = 0; c.vr = 0; });
+        return { cards, cw, ch, collapseAt: 200 + cards.length * 150 + 900, collapsed: false };
+      },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        if(!st.collapsed && t >= st.collapseAt){
+          st.collapsed = true;
+          for(const c of st.cards){ c.vx = rnd(-3, 3); c.vy = rnd(-3, 0); c.vr = rnd(-0.12, 0.12); }
+        }
+        const wobble = !st.collapsed && t > st.collapseAt - 500 ? Math.sin(t / 40) * 0.02 : 0;
+        for(const c of st.cards){
+          if(t < c.at) continue;
+          if(st.collapsed){ tumble(c, dt, 0.4); drawCard(ctx, c.card, c.x, c.y, st.cw, st.ch, c.rot); continue; }
+          const p = easeOut((t - c.at) / 280);
+          drawCard(ctx, c.card, c.tx, c.ty - (1 - p) * (c.ty + st.ch), st.cw, st.ch, c.trot + wobble);
+        }
+        return t < st.collapseAt + 2500;
+      }
+    },
+
+    // The deck fans out into a full spinning circle, then flies outward.
+    fan: {
+      init(w, h){
+        const ch = Math.min(h * 0.24, w * 0.2, 180), cw = ch / 1.4;
+        const cards = []; for(let i=0;i<24;i++) cards.push(randCard());
+        return { cards, cw, ch, cx: w / 2, cy: h * 0.52 };
+      },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        const n = st.cards.length;
+        const spread = easeOut((t - 300) / 1600);
+        const spin = t * 0.00035;
+        const out = t > 5000 ? (t - 5000) * 0.35 : 0;
+        const fade = fadeOutAt(t, 5600, 1200);
+        st.cards.forEach((c, i)=>{
+          const ang = (i / n) * Math.PI * 2 * spread + spin;
+          const r = st.ch * 0.55 + out;
+          drawCard(ctx, c, st.cx + Math.sin(ang) * r, st.cy - Math.cos(ang) * r, st.cw, st.ch, ang, 1, fade);
+        });
+        return t < 7000;
+      }
+    },
+
+    // Cards spring from one pile to the other in a long arc, like a magician's trick -- and back.
+    spring: {
+      init(w, h){
+        const { cw, ch } = animCardSize(w, h, 1.2);
+        const n = 44, cards = []; for(let i=0;i<n;i++) cards.push(randCard());
+        return { cards, n, cw, ch, ax: w * 0.18, bx: w * 0.82, y: h * 0.68, arc: h * 0.42, dur: 650 };
+      },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        const { n, cw, ch, ax, bx, y, arc, dur } = st;
+        const fade = fadeOutAt(t, 7200, 800);
+        // Each card: left pile -> flying to the right -> right pile -> flying back -> left pile.
+        let left = 0, right = 0;
+        const flying = [];
+        for(let i=0;i<n;i++){
+          const s1 = 300 + i * 55, s2 = 3800 + i * 55;
+          if(t < s1 || t >= s2 + dur) left++;
+          else if(t < s1 + dur) flying.push({ c: st.cards[i], from: 'a', p: (t - s1) / dur });
+          else if(t < s2) right++;
+          else flying.push({ c: st.cards[i], from: 'b', p: (t - s2) / dur });
+        }
+        const pile = (x, count)=>{ const show = Math.min(count, 8); for(let k=0;k<show;k++) drawCard(ctx, st.cards[k], x + k * 0.4, y - k * 1.5, cw, ch, 0, -1, fade); };
+        pile(ax, left); pile(bx, right);
+        for(const f of flying){
+          const x0 = f.from === 'a' ? ax : bx, x1 = f.from === 'a' ? bx : ax;
+          const x = x0 + (x1 - x0) * f.p, yy = y - Math.sin(Math.PI * f.p) * arc;
+          drawCard(ctx, f.c, x, yy, cw, ch, (f.p - 0.5) * 0.9 * (f.from === 'a' ? 1 : -1), Math.cos(f.p * Math.PI * 2), fade);
+        }
+        return t < 8000;
+      }
+    },
+
+    // A long line of standing cards topples like dominoes.
+    dominoes: {
+      init(w, h){
+        const n = Math.max(10, Math.min(22, Math.floor(w / 55)));
+        const ch = Math.min(h * 0.26, w / (n * 0.55 + 1.6), 170), cw = ch / 1.4;
+        const gap = ch * 0.55, x0 = (w - (n - 1) * gap) / 2 - cw / 2;
+        const deck = wonDeck(), cards = [];
+        for(let i=0;i<n;i++) cards.push({ card: deck[i % deck.length], x: x0 + i * gap, ang: 0, start: i === 0 ? 600 : null });
+        return { cards, cw, ch, base: h * 0.78, rest: Math.asin(Math.min(0.95, gap / ch)), gap };
+      },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        const fade = fadeOutAt(t, 6800, 1200);
+        st.cards.forEach((c, i)=>{
+          const last = i === st.cards.length - 1;
+          const target = last ? Math.PI / 2 * 0.98 : st.rest;
+          if(c.start !== null && t >= c.start) c.ang = Math.min(target, target * Math.pow((t - c.start) / 260, 2));
+          if(!last && st.cards[i + 1].start === null && c.ang >= st.rest * 0.75) st.cards[i + 1].start = t;
+        });
+        for(const c of st.cards){
+          ctx.save(); ctx.globalAlpha = fade;
+          ctx.translate(c.x + st.cw, st.base); ctx.rotate(c.ang);
+          drawMiniCard(ctx, -st.cw, -st.ch, st.cw, st.ch, c.card.rank, c.card.suit);
+          ctx.restore();
+        }
+        return t < 8000;
+      }
+    },
+
+    // Cards gather into a slowly turning spiral galaxy, then fling outward.
+    spiral: {
+      init(w, h){
+        const { cw, ch } = animCardSize(w, h, 0.95);
+        const cards = []; for(let i=0;i<36;i++) cards.push({ card: randCard(), arm: i % 2, k: Math.floor(i / 2) });
+        return { cards, cw, ch, R: Math.min(w, h) * 0.48 };
+      },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        const cx = w / 2, cy = h / 2;
+        const form = easeOut(t / 2400), spin = t * 0.0006, ex = t > 5200 ? (t - 5200) / 1400 : 0;
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, st.R * 0.5);
+        g.addColorStop(0, `rgba(255,240,200,${0.35 * form * (1 - Math.min(1, ex))})`); g.addColorStop(1, 'rgba(255,240,200,0)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, st.R * 0.5, 0, 6.283); ctx.fill();
+        const order = st.cards.slice().sort((a, b) => b.k - a.k);
+        for(const c of order){
+          const th = c.arm * Math.PI + c.k * 0.42 + spin * (1 + (18 - c.k) * 0.05);
+          const r = (st.R * 0.08 + c.k * st.R * 0.05) * (form + (1 - form) * 3) * (1 + ex * 2.5);
+          const sc = 0.55 + c.k / 18 * 0.55;
+          drawCard(ctx, c.card, cx + Math.cos(th) * r, cy + Math.sin(th) * r * 0.75, st.cw * sc, st.ch * sc, th + Math.PI / 2, 1, 1 - Math.min(1, ex));
+        }
+        return t < 6800;
+      }
+    },
+
+    // Cards pour off a ledge in a waterfall and splash into the pool below.
+    waterfall: {
+      init(w, h){
+        const { cw, ch } = animCardSize(w, h);
+        return { cards: [], drops: [], next: 0, cw, ch, ledgeY: h * 0.3, ledgeX: w * 0.32, pool: h * 0.86 };
+      },
+      step(st, ctx, w, h, t, dt){
+        ctx.clearRect(0,0,w,h);
+        const fade = fadeOutAt(t, 6400, 1200);
+        const { ledgeX, ledgeY, pool, cw, ch } = st;
+        if(t < 5200 && t >= st.next){ st.cards.push({ card: randCard(), x: -cw, y: ledgeY - ch * 0.5, vx: rnd(3, 4.5), vy: 0, rot: 0, vr: 0, onLedge: true, sink: 0 }); st.next = t + rnd(70, 130); }
+        ctx.globalAlpha = fade;
+        const fallG = ctx.createLinearGradient(ledgeX, ledgeY, ledgeX + w * 0.12, pool);
+        fallG.addColorStop(0, 'rgba(120,190,255,0.35)'); fallG.addColorStop(1, 'rgba(120,190,255,0.08)');
+        ctx.fillStyle = fallG;
+        ctx.beginPath(); ctx.moveTo(ledgeX, ledgeY); ctx.quadraticCurveTo(ledgeX + w * 0.1, ledgeY + 10, ledgeX + w * 0.14, pool); ctx.lineTo(ledgeX + w * 0.04, pool); ctx.quadraticCurveTo(ledgeX + w * 0.02, ledgeY + 40, ledgeX, ledgeY + 12); ctx.fill();
+        for(const c of st.cards){
+          if(c.onLedge){ c.x += c.vx * dt; if(c.x > ledgeX){ c.onLedge = false; c.vr = rnd(-0.05, 0.12); } }
+          else if(c.sink === 0){ tumble(c, dt, 0.35); if(c.y > pool){ c.sink = 1; c.vy = 0.6; for(let i=0;i<6;i++) st.drops.push({ x: c.x, y: pool, vx: rnd(-2.5, 2.5), vy: -rnd(2, 5), life: 1 }); } }
+          else { c.y += c.vy * dt; c.x += c.vx * 0.3 * dt; c.sink -= 0.02 * dt; }
+          drawCard(ctx, c.card, c.x, c.y, cw, ch, c.rot, 1, c.sink > 0 ? c.sink : 1);
+        }
+        st.cards = st.cards.filter(c => !(c.sink < 0) && c.x < w + cw);
+        ctx.fillStyle = '#3a2c20';
+        roundRectPath(ctx, -20, ledgeY, ledgeX + 24, 18, 8); ctx.fill();
+        ctx.fillStyle = 'rgba(40,120,200,0.55)';
+        ctx.beginPath(); ctx.moveTo(0, h);
+        for(let x=0; x<=w + 12; x+=12) ctx.lineTo(x, pool + Math.sin(x / 40 + t / 300) * 4);
+        ctx.lineTo(w, h); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = 'rgba(210,235,255,0.8)';
+        for(const d of st.drops){ d.vy += 0.25 * dt; d.x += d.vx * dt; d.y += d.vy * dt; d.life -= 0.03 * dt; ctx.beginPath(); ctx.arc(d.x, d.y, 2.2, 0, 6.283); ctx.fill(); }
+        st.drops = st.drops.filter(d => d.life > 0 && d.y < h);
+        ctx.globalAlpha = 1;
+        return t < 7600;
+      }
+    }
+  };
+
+  // ---------------- Win sounds ----------------
+  // Gentle generated jingles (one per win, picked at random independently of the
+  // animation), plus a soft themed effect for the weather animations. All synthesized with
+  // WebAudio -- no sound files. Respects the Sound Effects switch like everything else.
+  let noiseBuf = null;
+  function getNoise(c){
+    if(!noiseBuf){
+      const len = c.sampleRate * 2;
+      noiseBuf = c.createBuffer(1, len, c.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for(let i=0;i<len;i++) d[i] = Math.random() * 2 - 1;
+    }
+    return noiseBuf;
+  }
+  const NOTE = n => 440 * Math.pow(2, (n - 69) / 12); // MIDI note number -> Hz
+  function tone(c, out, freq, at, dur, o = {}){
+    const osc = c.createOscillator(), g = c.createGain();
+    osc.type = o.type || 'sine';
+    osc.frequency.setValueAtTime(freq, at);
+    if(o.slideTo) osc.frequency.exponentialRampToValueAtTime(o.slideTo, at + dur);
+    const vol = o.vol || 0.1, atk = o.attack || 0.01;
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(vol, at + atk);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    osc.connect(g); g.connect(o.dest || out);
+    osc.start(at); osc.stop(at + dur + 0.05);
+  }
+  function noise(c, out, at, dur, o = {}){
+    const src = c.createBufferSource(); src.buffer = getNoise(c); src.loop = true;
+    const f = c.createBiquadFilter(); f.type = o.filter || 'lowpass'; f.Q.value = o.q || 1;
+    f.frequency.setValueAtTime(o.freq || 800, at);
+    if(o.freqTo) f.frequency.exponentialRampToValueAtTime(o.freqTo, at + dur);
+    const g = c.createGain(), vol = o.vol || 0.08;
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(vol, at + (o.attack || 0.05));
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    src.connect(f); f.connect(g); g.connect(out);
+    src.start(at, Math.random()); src.stop(at + dur + 0.05);
+  }
+  const WIN_JINGLES = {
+    arpeggio(c, o, t){ [72,76,79,84].forEach((n, i)=> tone(c, o, NOTE(n), t + i * 0.11, 0.5, { type: 'triangle' })); tone(c, o, NOTE(88), t + 0.44, 1.0, { vol: 0.07 }); },
+    fanfare(c, o, t){
+      const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1600; f.connect(o);
+      [[67,0,.12],[67,.14,.12],[67,.28,.12],[72,.42,.5],[76,.95,.2],[79,1.15,.8]].forEach(([n, s, d])=> tone(c, o, NOTE(n), t + s, d, { type: 'sawtooth', vol: 0.12, attack: 0.02, dest: f }));
+    },
+    musicbox(c, o, t){ [84,88,91,88,96,91,93,96].forEach((n, i)=> tone(c, o, NOTE(n), t + i * 0.16, 0.9, { vol: 0.06, attack: 0.003 })); },
+    marimba(c, o, t){ [60,62,64,67,69,72,74,76].forEach((n, i)=>{ tone(c, o, NOTE(n), t + i * 0.08, 0.35, { vol: 0.11, attack: 0.003 }); tone(c, o, NOTE(n) * 4, t + i * 0.08, 0.08, { vol: 0.025, attack: 0.002 }); }); },
+    chimes(c, o, t){ [96,93,91,88,84,81,79].forEach((n, i)=>{ const f = NOTE(n); [1, 2.76, 5.4].forEach((m, k)=> tone(c, o, f * m, t + i * 0.18, 2.2 - k * 0.6, { vol: 0.045 / (k + 1), attack: 0.002 })); }); },
+    chiptune(c, o, t){ [72,76,79,84,79,84,88].forEach((n, i)=> tone(c, o, NOTE(n), t + i * 0.07, 0.09, { type: 'square', vol: 0.09, attack: 0.002 })); tone(c, o, NOTE(84), t + 0.55, 0.4, { type: 'square', vol: 0.09 }); },
+    harp(c, o, t){ const sc = [0,2,4,7,9]; for(let i=0;i<15;i++) tone(c, o, NOTE(60 + sc[i % 5] + 12 * Math.floor(i / 5)), t + i * 0.045, 1.2, { type: 'triangle', vol: 0.05, attack: 0.004 }); },
+    kalimba(c, o, t){ [74,79,81,86,83,79,86].forEach((n, i)=>{ tone(c, o, NOTE(n), t + i * 0.17, 0.7, { vol: 0.09, attack: 0.003 }); tone(c, o, NOTE(n) * 3.01, t + i * 0.17, 0.15, { vol: 0.018, attack: 0.002 }); }); },
+    organ(c, o, t){ [48,60,64,67,72].forEach(n=> [1,2,3].forEach((m, k)=> tone(c, o, NOTE(n) * m, t, 2.4, { vol: 0.025 / (k + 1), attack: 0.4 }))); },
+    steeldrum(c, o, t){ [[72,0],[76,.15],[79,.3],[76,.45],[81,.6],[79,.9]].forEach(([n, s])=>{ tone(c, o, NOTE(n), t + s, 0.5, { vol: 0.08, attack: 0.004 }); tone(c, o, NOTE(n) * 2.01, t + s, 0.3, { vol: 0.035, attack: 0.004 }); tone(c, o, NOTE(n) * 3.98, t + s, 0.12, { vol: 0.012, attack: 0.003 }); }); },
+    whistle(c, o, t){ tone(c, o, NOTE(72), t, 0.5, { vol: 0.11, slideTo: NOTE(84), attack: 0.05 }); tone(c, o, NOTE(84), t + 0.55, 0.18, { vol: 0.11 }); tone(c, o, NOTE(91), t + 0.75, 0.6, { vol: 0.11 }); },
+    twinkle(c, o, t){ const sc = [84,86,88,91,93,96,98,100]; for(let i=0;i<14;i++) tone(c, o, NOTE(pick(sc)), t + i * 0.09 + Math.random() * 0.04, 0.6, { vol: 0.065, attack: 0.003 }); }
+  };
+  const WIN_SFX = {
+    tornado(c, o, t){ noise(c, o, t, 4.5, { filter: 'bandpass', freq: 300, freqTo: 1400, q: 2, vol: 0.22, attack: 1.2 }); noise(c, o, t + 2, 3.5, { filter: 'bandpass', freq: 1400, freqTo: 250, q: 2, vol: 0.17, attack: 0.8 }); },
+    volcano(c, o, t){ noise(c, o, t + 0.5, 3.5, { freq: 120, vol: 0.16, attack: 0.3 }); tone(c, o, 55, t + 0.5, 1.8, { vol: 0.13, slideTo: 35, attack: 0.02 }); noise(c, o, t + 0.7, 2.5, { freq: 2500, freqTo: 600, vol: 0.025 }); },
+    icestorm(c, o, t){ noise(c, o, t, 5, { filter: 'highpass', freq: 2500, vol: 0.035, attack: 1 }); for(let i=0;i<10;i++) tone(c, o, NOTE(96 + Math.floor(Math.random() * 12)), t + 0.3 + i * 0.35 + Math.random() * 0.2, 0.8, { vol: 0.02, attack: 0.002 }); },
+    flood(c, o, t){ noise(c, o, t, 5, { freq: 500, vol: 0.07, attack: 1.5 }); for(let i=0;i<12;i++){ const s = t + 0.4 + i * 0.3 + Math.random() * 0.2, f = rnd(300, 700); tone(c, o, f, s, 0.12, { vol: 0.04, slideTo: f * 2, attack: 0.005 }); } },
+    lightning(c, o, t){ [0.5, 2.3, 3.9].forEach(s=>{ noise(c, o, t + s, 0.25, { filter: 'highpass', freq: 1500, vol: 0.1, attack: 0.005 }); noise(c, o, t + s + 0.05, 2.2, { freq: 180, vol: 0.14, attack: 0.08 }); }); noise(c, o, t, 6, { filter: 'highpass', freq: 1800, vol: 0.025, attack: 0.5 }); },
+    fireworks(c, o, t){ for(let i=0;i<7;i++){ const s = t + 0.5 + i * 0.55 + Math.random() * 0.2; noise(c, o, s, 0.35, { freq: 900, vol: 0.1, attack: 0.003 }); for(let k=0;k<5;k++) noise(c, o, s + 0.25 + Math.random() * 0.5, 0.04, { filter: 'highpass', freq: 3000, vol: 0.03, attack: 0.002 }); } }
+  };
+  function playWinSound(animName){
+    if(!soundOn) return null;
+    const c = ensureAudio();
+    if(!c) return null;
+    if(c.state === 'suspended') c.resume();
+    const out = c.createGain(); out.gain.value = 0.9; out.connect(c.destination);
+    const t = c.currentTime + 0.05;
+    const name = nextFromBag(WIN_SOUND_KEY, Object.keys(WIN_JINGLES));
+    WIN_JINGLES[name](c, out, t);
+    if(WIN_SFX[animName]) WIN_SFX[animName](c, out, t);
+    return name;
+  }
+
+  // Truly random pick for the win animations and jingles, so there's no pattern to predict --
+  // it only avoids whatever played in the last few wins (persisted, so it holds across reloads).
+  function nextFromBag(storageKey, keys, avoid = 3){
+    let recent = [];
+    try{ const saved = JSON.parse(localStorage.getItem(storageKey)); if(saved && Array.isArray(saved.recent)) recent = saved.recent; }catch(e){}
+    const fresh = keys.filter(k => !recent.slice(-avoid).includes(k));
+    const pool = fresh.length ? fresh : keys;
+    const name = pool[Math.floor(Math.random() * pool.length)];
+    recent = recent.concat(name).slice(-avoid);
+    try{ localStorage.setItem(storageKey, JSON.stringify({ recent })); }catch(e){}
+    return name;
+  }
+  function nextWinAnimName(){ return nextFromBag(WIN_ANIM_KEY, Object.keys(WIN_ANIMS)); }
+
+  function stopWinAnimation(){
+    if(!winAnim) return;
+    cancelAnimationFrame(winAnim.raf);
+    clearTimeout(winAnim.fadeTimer);
+    winAnim.canvas.remove();
+    winAnim = null;
+  }
+
+  function playWinAnimation(name){
+    stopWinAnimation();
+    if(!WIN_ANIMS[name]) name = nextWinAnimName();
+    const anim = WIN_ANIMS[name];
+    const overlay = document.getElementById('winOverlay');
+    const canvas = document.createElement('canvas');
+    canvas.className = 'winCanvas';
+    canvas.dataset.anim = name;
+    overlay.insertBefore(canvas, overlay.firstChild);
+    const w = window.innerWidth, h = window.innerHeight, dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    const st = anim.init(w, h);
+    const ctl = { canvas, raf: 0, fadeTimer: 0, name };
+    const start = performance.now();
+    let last = start;
+    function frame(now){
+      const t = now - start;
+      const dt = Math.min(3, Math.max(0, (now - last) / 16.667));
+      last = now;
+      const running = anim.step(st, ctx, w, h, t, dt);
+      if(running && t < 15000){ ctl.raf = requestAnimationFrame(frame); return; }
+      canvas.style.opacity = '0';
+      ctl.fadeTimer = setTimeout(()=>{ if(winAnim === ctl) stopWinAnimation(); }, 900);
+    }
+    ctl.raf = requestAnimationFrame(frame);
+    winAnim = ctl;
+    return name;
+  }
+
+  // ---------------- Toast ----------------
+  let toastTimer = null;
+  function toast(msg){
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(()=> el.classList.remove('show'), 2200);
+  }
+
+  // ---------------- Sound ----------------
+  function ensureAudio(){
+    if(!audioCtx){
+      try{ audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }catch(e){ audioCtx = null; }
+    }
+    return audioCtx;
+  }
+  function playSound(kind){
+    if(!soundOn) return;
+    const ctx = ensureAudio();
+    if(!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    let freq = 440, dur = 0.08, type='sine';
+    if(kind === 'move'){ freq = 520; dur = 0.06; }
+    else if(kind === 'deal'){ freq = 360; dur = 0.05; }
+    else if(kind === 'complete'){ freq = 700; dur = 0.25; type='triangle'; }
+    else if(kind === 'win'){ freq = 880; dur = 0.6; type='triangle'; }
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, now);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.15, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    osc.start(now);
+    osc.stop(now + dur + 0.02);
+    if(kind === 'complete' || kind === 'win'){
+      const osc2 = ctx.createOscillator();
+      osc2.type = type;
+      osc2.frequency.setValueAtTime(freq*1.5, now+0.08);
+      osc2.connect(gain);
+      osc2.start(now+0.08); osc2.stop(now+0.08+dur);
+    }
+  }
+
+  // ---------------- Auto-Solve ----------------
+  // A best-effort bot: greedy heuristic playouts (prefer revealing hidden cards, then
+  // extending a run, then dealing) with many randomized restarts, run on a scratch copy
+  // of the board so it can search fast without touching the real game. It replays whichever
+  // line got furthest against the REAL engine (performMove/dealStock — the same functions
+  // the UI uses), so every move it makes is fully rule-checked. It is not a guaranteed
+  // solver — Spider is a genuinely hard search problem — so it may finish short of 8/8.
+  function cloneCards(arr){ return arr.map(c => ({id:c.id, suit:c.suit, rank:c.rank, up:c.up})); }
+  function cloneSim(s){
+    return { columns: s.columns.map(cloneCards), stock: cloneCards(s.stock), completed: s.completed.slice() };
+  }
+  function findValidStartSim(columns, colIdx){
+    const arr = columns[colIdx];
+    if(arr.length === 0) return 0;
+    let i = arr.length - 1;
+    if(!arr[i].up) return arr.length;
+    while(i > 0 && arr[i-1].up && arr[i-1].suit === arr[i].suit && arr[i-1].rank === arr[i].rank + 1) i--;
+    return i;
+  }
+  function canDropSim(columns, seq, destColIdx){
+    const dest = columns[destColIdx];
+    if(dest.length === 0) return true;
+    const top = dest[dest.length-1];
+    return top.up && top.rank === seq[0].rank + 1;
+  }
+  function checkCompletedSim(sim){
+    for(let c=0;c<10;c++){
+      const arr = sim.columns[c];
+      if(arr.length >= 13){
+        const tail = arr.slice(-13);
+        if(tail[0].rank === 13 && tail.every(cd=>cd.up)){
+          let ok = true;
+          for(let k=0;k<12;k++){ if(tail[k].suit !== tail[k+1].suit || tail[k].rank !== tail[k+1].rank + 1){ ok=false; break; } }
+          if(ok && tail[12].rank === 1){
+            sim.columns[c] = arr.slice(0, arr.length-13);
+            if(sim.columns[c].length) sim.columns[c][sim.columns[c].length-1].up = true;
+            sim.completed.push(1);
+          }
+        }
+      }
+    }
+  }
+  function doMoveSim(sim, fromCol, fromIdx, toCol){
+    const arr = sim.columns[fromCol];
+    const seq = arr.slice(fromIdx);
+    sim.columns[fromCol] = arr.slice(0, fromIdx);
+    if(sim.columns[fromCol].length) sim.columns[fromCol][sim.columns[fromCol].length-1].up = true;
+    sim.columns[toCol] = sim.columns[toCol].concat(seq);
+    checkCompletedSim(sim);
+  }
+  function doDealSim(sim){
+    for(let c=0;c<10;c++){ const card = sim.stock.pop(); card.up = true; sim.columns[c].push(card); }
+    checkCompletedSim(sim);
+  }
+  function legalMovesSim(sim){
+    const moves = [];
+    for(let from=0; from<10; from++){
+      const arr = sim.columns[from];
+      if(arr.length === 0) continue;
+      const vs = findValidStartSim(sim.columns, from);
+      for(let start=vs; start<arr.length; start++){
+        const seq = arr.slice(start);
+        for(let to=0; to<10; to++){
+          if(to === from) continue;
+          if(canDropSim(sim.columns, seq, to)){
+            moves.push({from, start, to, revealsHidden: start>0 && !arr[start-1].up, len: seq.length, toEmpty: sim.columns[to].length===0});
+          }
+        }
+      }
+    }
+    return moves;
+  }
+  function stateHash(sim){
+    return sim.columns.map(c => c.map(cd => cd.id + (cd.up?'u':'d')).join(',')).join('|') + '#' + sim.stock.length;
+  }
+  function solverPlayout(initSim, maxActions){
+    const sim = cloneSim(initSim);
+    const actions = [];
+    const seen = new Set([stateHash(sim)]);
+    for(let step=0; step<maxActions; step++){
+      if(sim.completed.length >= 8) return {win:true, actions, completed: sim.completed.length};
+      let moves = legalMovesSim(sim);
+      moves.forEach(m => { m.rnd = Math.random(); });
+      moves.sort((a,b) => (b.revealsHidden - a.revealsHidden) || ((!a.toEmpty) - (!b.toEmpty)) || (b.len - a.len) || (a.rnd - b.rnd));
+      const bestReveals = moves.length && moves[0].revealsHidden;
+      if(!bestReveals && sim.stock.length > 0){
+        const trial = cloneSim(sim);
+        doDealSim(trial);
+        const h = stateHash(trial);
+        if(!seen.has(h)){ seen.add(h); Object.assign(sim, trial); actions.push({type:'deal'}); continue; }
+      }
+      let applied = false;
+      for(let i=0; i<moves.length; i++){
+        const m = moves[i];
+        const trial = cloneSim(sim);
+        doMoveSim(trial, m.from, m.start, m.to);
+        const h = stateHash(trial);
+        if(!seen.has(h)){
+          seen.add(h); Object.assign(sim, trial);
+          actions.push({type:'move', from:m.from, idx:m.start, to:m.to});
+          applied = true; break;
+        }
+      }
+      if(applied) continue;
+      if(sim.stock.length > 0){
+        const trial = cloneSim(sim);
+        doDealSim(trial);
+        const h = stateHash(trial);
+        if(!seen.has(h)){ seen.add(h); Object.assign(sim, trial); actions.push({type:'deal'}); continue; }
+      }
+      break; // truly stuck
+    }
+    return {win: sim.completed.length >= 8, actions, completed: sim.completed.length};
+  }
+
+  let solving = false;
+  function setControlsDisabled(disabled){
+    ['btnNew','btnRestart','btnUndo','btnHint','btnSolve','stockPile'].forEach(id=>{
+      const el = document.getElementById(id);
+      if(el) el.style.pointerEvents = disabled ? 'none' : '';
+    });
+  }
+  function autoSolve(){
+    if(solving) return;
+    solving = true;
+    setControlsDisabled(true);
+    toast('🤖 Solving… this can take a few seconds');
+    setTimeout(()=>{
+      const initSim = { columns: state.columns.map(cloneCards), stock: cloneCards(state.stock), completed: [] };
+      const ATTEMPTS = 2000, MAX_ACTIONS = 600;
+      let best = null;
+      for(let a=0; a<ATTEMPTS; a++){
+        const res = solverPlayout(initSim, MAX_ACTIONS);
+        if(!best || (res.win && !best.win) || (res.completed > best.completed) ||
+           (res.win === best.win && res.completed === best.completed && res.actions.length < best.actions.length)){
+          best = res;
+        }
+        if(best.win) break;
+      }
+      // Animate the chosen line against the REAL engine, one action at a time.
+      let i = 0;
+      const step = setInterval(()=>{
+        if(i >= best.actions.length){
+          clearInterval(step);
+          solving = false;
+          setControlsDisabled(false);
+          toast(best.win ? '🤖 Solved it! 8/8 sets.' : `🤖 Got stuck at ${state.completed.length}/8 sets — no full solve this time.`);
+          return;
+        }
+        const act = best.actions[i++];
+        if(act.type === 'move') performMove(act.from, act.idx, act.to);
+        else dealStock();
+      }, 90);
+    }, 30);
+  }
+
+  // ---------------- Persistence ----------------
+  // Refreshing the page, or a browser switching "desktop/mobile site" mode (which reloads
+  // the page), used to silently discard the whole game. Autosave the board to localStorage
+  // after every render and reload it on startup instead of always dealing a fresh game.
+  const SAVE_KEY = 'spiderSolitaireSaveV1';
+  function saveGame(){
+    if(!state) return;
+    try{
+      localStorage.setItem(SAVE_KEY, JSON.stringify({
+        columns: state.columns,
+        stock: state.stock,
+        completed: state.completed,
+        score: state.score,
+        moves: state.moves,
+        suitCount, soundOn, elapsedSec, cardBackTheme, tableTheme, preferredSuit, randomSuit,
+        initialState
+      }));
+    }catch(e){ /* private browsing / storage disabled — just skip persistence */ }
+  }
+  function loadSavedGame(){
+    try{
+      const raw = localStorage.getItem(SAVE_KEY);
+      if(!raw) return null;
+      const data = JSON.parse(raw);
+      if(!data || !Array.isArray(data.columns) || data.columns.length !== 10 || !Array.isArray(data.stock)) return null;
+      return data;
+    }catch(e){ return null; }
+  }
+  function restoreGame(data){
+    state = {
+      columns: data.columns,
+      stock: data.stock,
+      completed: Array.isArray(data.completed) ? data.completed : [],
+      score: typeof data.score === 'number' ? data.score : 500,
+      moves: typeof data.moves === 'number' ? data.moves : 0
+    };
+    suitCount = (data.suitCount === 1 || data.suitCount === 2) ? data.suitCount : 4;
+    soundOn = data.soundOn !== false;
+    const soundEl = document.getElementById('soundToggle');
+    if(soundEl) soundEl.checked = soundOn;
+    applyCardBackTheme(data.cardBackTheme);
+    applyTableTheme(data.tableTheme);
+    // Saves from before the suit picker existed were always dealt in spades.
+    preferredSuit = SUIT_PARTNER[data.preferredSuit] ? data.preferredSuit : '♠';
+    randomSuit = data.randomSuit !== false;
+    updateSuitChoiceUI();
+    // Absent in a save written before this feature shipped -- Restart just stays disabled for
+    // that one loaded game (see updateStats()) rather than restoring to the wrong thing.
+    initialState = (data.initialState && Array.isArray(data.initialState.columns)) ? data.initialState : null;
+    history = [];
+    selected = null;
+    updateSuitPillUI();
+    startTimer(typeof data.elapsedSec === 'number' ? data.elapsedSec : 0);
+    render();
+    updateStats();
+    if(state.completed.length >= 8) triggerWin(false);
+  }
+
+  // ---------------- Win/best-time stats ----------------
+  // A separate localStorage key from SAVE_KEY (the in-progress game) -- this needs to survive
+  // across every new game and reload instead of being overwritten by the next deal, keyed per
+  // difficulty since a 4-suit time/move-count isn't comparable to a 1-suit one.
+  const STATS_KEY = 'spiderSolitaireStatsV1';
+  function emptyStatsEntry(){ return { wins: 0, bestTime: null, bestMoves: null }; }
+  function loadStats(){
+    try{
+      const raw = localStorage.getItem(STATS_KEY);
+      const data = raw ? JSON.parse(raw) : {};
+      [1,2,4].forEach(n=>{
+        const e = data[n];
+        data[n] = (e && typeof e === 'object') ? {
+          wins: typeof e.wins === 'number' ? e.wins : 0,
+          bestTime: typeof e.bestTime === 'number' ? e.bestTime : null,
+          bestMoves: typeof e.bestMoves === 'number' ? e.bestMoves : null
+        } : emptyStatsEntry();
+      });
+      return data;
+    }catch(e){
+      return { 1: emptyStatsEntry(), 2: emptyStatsEntry(), 4: emptyStatsEntry() };
+    }
+  }
+  function saveStats(){
+    try{ localStorage.setItem(STATS_KEY, JSON.stringify(gameStats)); }
+    catch(e){ /* private browsing / storage disabled — just skip persistence */ }
+  }
+  let gameStats = loadStats();
+
+  // Updates the current difficulty's entry against THIS win's time/moves, returns which (if
+  // either) was actually a new record so the win screen can call it out.
+  function recordWin(){
+    const entry = gameStats[suitCount] || (gameStats[suitCount] = emptyStatsEntry());
+    entry.wins++;
+    const newBestTime = entry.bestTime === null || elapsedSec < entry.bestTime;
+    const newBestMoves = entry.bestMoves === null || state.moves < entry.bestMoves;
+    if(newBestTime) entry.bestTime = elapsedSec;
+    if(newBestMoves) entry.bestMoves = state.moves;
+    saveStats();
+    return { newBestTime, newBestMoves };
+  }
+
+  // Shows either a "new record" badge per stat actually beaten, or — when this win didn't beat
+  // anything (or isn't a fresh win at all, see triggerWin's isNewWin) — a quiet reminder of
+  // what the real best for this difficulty is, so the numbers above have something to compare
+  // against either way.
+  function renderWinBest(newBestTime, newBestMoves){
+    const el = document.getElementById('winBest');
+    const entry = gameStats[suitCount];
+    if(!entry){ el.innerHTML = ''; return; }
+    const badges = [];
+    if(newBestTime) badges.push('⏱️ New best time!');
+    if(newBestMoves) badges.push('🎯 New best moves!');
+    if(badges.length){
+      el.innerHTML = badges.map(b => `<span class="win-badge">${b}</span>`).join('');
+    } else if(entry.bestTime !== null){
+      el.innerHTML = `<div class="win-best-summary">Your best: ${formatTime(entry.bestTime)} · ${entry.bestMoves} moves</div>`;
+    } else {
+      el.innerHTML = '';
+    }
+  }
+
+  // Rebuilt each time the overlay opens rather than kept in sync live -- it's only ever shown
+  // right after a fresh read of gameStats, so there's no staleness window worth avoiding here.
+  function renderStatsTable(){
+    const wrap = document.getElementById('statsTable');
+    const labels = { 1: '1 Suit', 2: '2 Suits', 4: '4 Suits' };
+    wrap.innerHTML = `
+      <div class="statsHeader">
+        <span></span><span>Wins</span><span>Best Time</span><span>Best Moves</span>
+      </div>
+    `;
+    [1,2,4].forEach(n=>{
+      const entry = gameStats[n] || emptyStatsEntry();
+      const row = document.createElement('div');
+      row.className = 'statsRow';
+      const timeStr = entry.bestTime !== null ? formatTime(entry.bestTime) : '—';
+      const movesStr = entry.bestMoves !== null ? entry.bestMoves : '—';
+      row.innerHTML = `
+        <span class="statsDiff">${labels[n]}</span>
+        <span class="statsVal${entry.wins === 0 ? ' empty' : ''}">${entry.wins}</span>
+        <span class="statsVal${entry.bestTime === null ? ' empty' : ''}">${timeStr}</span>
+        <span class="statsVal${entry.bestMoves === null ? ' empty' : ''}">${movesStr}</span>
+      `;
+      wrap.appendChild(row);
+    });
+  }
+
+  // ---------------- Settings UI ----------------
+  function updateSuitPillUI(){
+    document.querySelectorAll('#suitPills .pill').forEach(p=>{
+      p.classList.toggle('active', parseInt(p.dataset.suits,10) === suitCount);
+    });
+    updateSuitChoiceUI();
+  }
+
+  // Built once from CARD_BACK_THEMES rather than hardcoded in the HTML, so the markup and the
+  // theme list can't drift out of sync -- add a theme to the object above and it just appears.
+  function buildCardBackSwatches(){
+    const wrap = document.getElementById('cardBackSwatches');
+    wrap.innerHTML = '';
+    Object.keys(CARD_BACK_THEMES).forEach(key=>{
+      const t = CARD_BACK_THEMES[key];
+      const sw = document.createElement('div');
+      sw.className = 'swatch';
+      sw.dataset.theme = key;
+      sw.title = t.name;
+      sw.style.setProperty('--sw1', t.c1);
+      sw.style.setProperty('--sw2', t.c2);
+      wrap.appendChild(sw);
+    });
+  }
+
+  // Swapping the theme is just updating two CSS custom properties -- .card.facedown and
+  // .stockPile both read var(--back-1)/var(--back-2) already, so every facedown card and the
+  // stock pile repaint immediately with no re-render needed.
+  function applyCardBackTheme(name){
+    cardBackTheme = CARD_BACK_THEMES[name] ? name : 'purple';
+    const t = CARD_BACK_THEMES[cardBackTheme];
+    document.documentElement.style.setProperty('--back-1', t.c1);
+    document.documentElement.style.setProperty('--back-2', t.c2);
+    document.querySelectorAll('#cardBackSwatches .swatch').forEach(sw=>{
+      sw.classList.toggle('active', sw.dataset.theme === cardBackTheme);
+    });
+  }
+
+  function buildTableSwatches(){
+    const wrap = document.getElementById('tableSwatches');
+    wrap.innerHTML = '';
+    Object.keys(TABLE_THEMES).forEach(key=>{
+      const t = TABLE_THEMES[key];
+      const sw = document.createElement('div');
+      sw.className = 'swatch';
+      sw.dataset.theme = key;
+      sw.title = t.name;
+      sw.style.setProperty('--sw1', t.f2);
+      sw.style.setProperty('--sw2', t.f1);
+      wrap.appendChild(sw);
+    });
+  }
+  function applyTableTheme(name){
+    tableTheme = TABLE_THEMES[name] ? name : 'green';
+    const t = TABLE_THEMES[tableTheme];
+    const root = document.documentElement.style;
+    root.setProperty('--felt-1', t.f1);
+    root.setProperty('--felt-2', t.f2);
+    root.setProperty('--dlg-1', t.d1);
+    root.setProperty('--dlg-2', t.d2);
+    root.setProperty('--panel-solid', t.panel);
+    document.querySelectorAll('#tableSwatches .swatch').forEach(sw=>{
+      sw.classList.toggle('active', sw.dataset.theme === tableTheme);
+    });
+  }
+
+  function buildSuitChoices(){
+    const wrap = document.getElementById('suitChoices');
+    wrap.innerHTML = '';
+    const names = { '♠':'Spades', '♥':'Hearts', '♦':'Diamonds', '♣':'Clubs' };
+    ALL_SUITS.forEach(s=>{
+      const b = document.createElement('div');
+      b.className = 'suitChoice ' + s.color;
+      b.dataset.suit = s.sym;
+      b.title = names[s.sym];
+      b.textContent = s.sym;
+      wrap.appendChild(b);
+    });
+  }
+  function updateSuitChoiceUI(){
+    document.querySelectorAll('#suitChoices .suitChoice').forEach(b=>{
+      b.classList.toggle('active', !randomSuit && b.dataset.suit === preferredSuit);
+    });
+    document.getElementById('randomSuitToggle').checked = randomSuit;
+    const note = document.getElementById('suitNote');
+    const group = document.getElementById('suitChoices');
+    group.classList.toggle('disabled', suitCount === 4);
+    const thisGame = suitCount === 2 ? preferredSuit + ' ' + SUIT_PARTNER[preferredSuit] : preferredSuit;
+    if(suitCount === 4) note.textContent = '4 Suits always uses all four — applies to 1 & 2 Suit games.';
+    else if(randomSuit) note.textContent = 'This game: ' + thisGame + '. Pick a suit to keep it for every game.';
+    else if(suitCount === 2) note.textContent = 'Paired with ' + SUIT_PARTNER[preferredSuit] + ' in 2 Suits.';
+    else note.textContent = '';
+  }
+  // Re-skins every card in the current game (board, stock, completed sets, undo history and
+  // the Restart snapshot) from the old suit(s) to the new ones, so switching suit mid-game
+  // keeps your progress. Same-suit runs stay same-suit because the mapping is one-to-one.
+  function setPreferredSuit(sym){
+    if(!SUIT_PARTNER[sym]) return;
+    randomSuit = false;
+    if(sym === preferredSuit){ updateSuitChoiceUI(); saveGame(); return; }
+    const map = {};
+    map[preferredSuit] = sym;
+    map[SUIT_PARTNER[preferredSuit]] = SUIT_PARTNER[sym];
+    preferredSuit = sym;
+    if(suitCount !== 4){
+      const walk = (o)=>{
+        if(Array.isArray(o)){ o.forEach(walk); return; }
+        if(o && typeof o === 'object'){
+          if(typeof o.suit === 'string' && map[o.suit]){
+            const ns = suitBySym(map[o.suit]);
+            o.suit = ns.sym; o.color = ns.color;
+          }
+          for(const k in o){ if(o[k] && typeof o[k] === 'object') walk(o[k]); }
+        }
+      };
+      walk(state); walk(initialState); walk(history);
+      render();
+    }
+    updateSuitChoiceUI();
+    saveGame();
+  }
+
+  // Difficulty tabs act directly, like solitaired.com's — picking one starts a new game at
+  // that difficulty right away (confirming first if a game is already in progress) rather than
+  // just staging a choice for a separate "Start New Game" button.
+  document.getElementById('suitPills').addEventListener('click', (e)=>{
+    const pill = e.target.closest('.pill');
+    if(!pill) return;
+    const suits = parseInt(pill.dataset.suits, 10);
+    if(suits === suitCount) return;
+    confirmNewGameIfNeeded(()=> newGame(suits));
+  });
+
+  document.getElementById('soundToggle').addEventListener('change', (e)=>{
+    soundOn = e.target.checked;
+    saveGame();
+  });
+
+  buildCardBackSwatches();
+  document.getElementById('cardBackSwatches').addEventListener('click', (e)=>{
+    const sw = e.target.closest('.swatch');
+    if(!sw) return;
+    applyCardBackTheme(sw.dataset.theme);
+    saveGame();
+  });
+
+  buildTableSwatches();
+  document.getElementById('tableSwatches').addEventListener('click', (e)=>{
+    const sw = e.target.closest('.swatch');
+    if(!sw) return;
+    applyTableTheme(sw.dataset.theme);
+    saveGame();
+  });
+
+  buildSuitChoices();
+  document.getElementById('randomSuitToggle').addEventListener('change', (e)=>{
+    randomSuit = e.target.checked;
+    // Turning random off without tapping a suit holds the current game's suit.
+    updateSuitChoiceUI();
+    saveGame();
+  });
+  document.getElementById('suitChoices').addEventListener('click', (e)=>{
+    const b = e.target.closest('.suitChoice');
+    if(!b) return;
+    setPreferredSuit(b.dataset.suit);
+  });
+
+  document.getElementById('btnSettings').addEventListener('click', (e)=>{
+    e.stopPropagation();
+    const panel = document.getElementById('settingsPanel');
+    const opening = !panel.classList.contains('open');
+    if(opening){
+      // position:fixed means this is no longer placed by #settingsWrap's own CSS — pin it
+      // just below and right-aligned to the button itself, in viewport coordinates.
+      const btnRect = e.currentTarget.getBoundingClientRect();
+      panel.style.top = (btnRect.bottom + 10) + 'px';
+      panel.style.right = (window.innerWidth - btnRect.right) + 'px';
+    }
+    panel.classList.toggle('open');
+  });
+  document.addEventListener('pointerdown', (e)=>{
+    const panel = document.getElementById('settingsPanel');
+    const btn = document.getElementById('btnSettings');
+    if(panel.classList.contains('open') && !panel.contains(e.target) && e.target !== btn){
+      panel.classList.remove('open');
+    }
+  });
+
+  // In-page confirm modal — NOT window.confirm(). That native dialog is disabled/silently
+  // returns false in many embedded webviews and sandboxed iframes (this page can run inside
+  // one), which made "New Game" appear completely dead as soon as autosave gave it a
+  // game with moves > 0 to confirm over. Shared by New Game and Restart (each fills in its
+  // own title/message/button text via showConfirm() rather than getting a separate overlay).
+  let pendingConfirmCb = null;
+  function showConfirm(opts, cb){
+    pendingConfirmCb = cb;
+    document.getElementById('confirmTitle').textContent = opts.title;
+    document.getElementById('confirmMsg').textContent = opts.message;
+    document.getElementById('btnConfirmYes').textContent = opts.confirmLabel;
+    document.getElementById('confirmOverlay').classList.add('show');
+  }
+  function confirmNewGameIfNeeded(cb){
+    if(state && state.moves > 0 && state.completed.length < 8){
+      showConfirm({
+        title: 'Start a new game?',
+        message: 'Current progress will be lost.',
+        confirmLabel: 'Start New Game'
+      }, cb);
+      return;
+    }
+    cb();
+  }
+  function confirmRestartIfNeeded(cb){
+    if(state && state.moves > 0 && state.completed.length < 8){
+      showConfirm({
+        title: 'Restart this deal?',
+        message: 'All moves will be undone, back to the very first deal.',
+        confirmLabel: 'Restart'
+      }, cb);
+      return;
+    }
+    cb();
+  }
+  document.getElementById('btnConfirmYes').addEventListener('click', ()=>{
+    document.getElementById('confirmOverlay').classList.remove('show');
+    const cb = pendingConfirmCb;
+    pendingConfirmCb = null;
+    if(cb) cb();
+  });
+  document.getElementById('btnConfirmCancel').addEventListener('click', ()=>{
+    document.getElementById('confirmOverlay').classList.remove('show');
+    pendingConfirmCb = null;
+  });
+
+  document.getElementById('btnNew').addEventListener('click', ()=>{
+    confirmNewGameIfNeeded(()=> newGame());
+  });
+  document.getElementById('btnRestart').addEventListener('click', ()=>{
+    confirmRestartIfNeeded(restart);
+  });
+  document.getElementById('btnUndo').addEventListener('click', undo);
+  document.getElementById('btnHint').addEventListener('click', hint);
+  document.getElementById('btnSolve').addEventListener('click', autoSolve);
+  document.getElementById('stockPile').addEventListener('click', dealStock);
+  document.getElementById('btnPlayAgain').addEventListener('click', ()=>{
+    document.getElementById('winOverlay').classList.remove('show');
+    newGame(suitCount);
+  });
+  document.getElementById('btnStats').addEventListener('click', ()=>{
+    document.getElementById('settingsPanel').classList.remove('open');
+    renderStatsTable();
+    document.getElementById('statsOverlay').classList.add('show');
+  });
+  document.getElementById('btnStatsClose').addEventListener('click', ()=>{
+    document.getElementById('statsOverlay').classList.remove('show');
+  });
+
+  window.addEventListener('keydown', (e)=>{
+    if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z'){ e.preventDefault(); undo(); }
+    else if(e.key.toLowerCase() === 'h'){ hint(); }
+    else if(e.key.toLowerCase() === 'n'){ confirmNewGameIfNeeded(()=>newGame()); }
+  });
+
+  let resizeTimer = null;
+  window.addEventListener('resize', ()=>{
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(render, 120);
+  });
+
+  // ---------------- Init ----------------
+  const savedGame = loadSavedGame();
+  if(savedGame){ restoreGame(savedGame); }
+  else { applyCardBackTheme('purple'); applyTableTheme('green'); newGame(1); }
+
+})();
+</script>
+</body>
+</html>
